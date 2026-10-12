@@ -632,6 +632,218 @@ if (codegraphReady) {
   check('检索：codegraph 未安装时跳过索引类断言（文本检索已覆盖）', () => assert.ok(true));
 }
 
+// ── 18. 机械触发规则（Firefox review-context.toml 的本地重写）────────────────
+const ctx = join(sandbox, 'ctx-project');
+mkdirSync(join(ctx, 'docs'), { recursive: true });
+mkdirSync(join(ctx, 'src'), { recursive: true });
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], ctx);
+writeFileSync(join(ctx, 'docs', 'webidl.md'), '# WebIDL 实现约定\n\nfoo\n');
+writeFileSync(join(ctx, 'docs', 'frontend.md'), '# 前端约定\n\nbar\n');
+writeFileSync(join(ctx, 'src', 'a.cpp'), 'int main() { return 0; }\n');
+
+const rulesFile = join(ctx, '.agents', 'context-rules.toml');
+// 写法照 Firefox 的 review-context.toml（数组元素是内联表、嵌套数组、注释、裸字符串路径）。
+writeFileSync(
+  rulesFile,
+  `# 冒烟用规则（照 Firefox review-context.toml 的写法）
+version = 1
+description = "冒烟用规则"
+
+[[rules]]
+name = "WebIDL 实现"
+description = "同时碰 WebIDL 与 C++ 时读它"
+when = { all = [
+  { any_file = { ext = [".webidl"] } },
+  { any_file = { ext = [".h", ".cpp"] } },
+] }
+load = [
+  { type = "file", path = "docs/webidl.md" },
+  { skill = "prompt-placement" },
+]
+
+[[rules]]
+name = "同一份文档（去重用）"
+when = { any_file = { ext = [".cpp"] } }
+load = [ { path = "docs/webidl.md" } ]
+
+[[rules]]
+name = "只改文档"
+when = { all_files = { include = ["docs/*"] } }
+load = [ { type = "file", path = "docs/frontend.md" } ]
+
+[[rules]]
+name = "前端约定"
+when = { any_file = { include = ["src/*"], exclude = ["src/test/*"], ext = [".ts"] } }
+load = [ { type = "file", path = "docs/frontend.md" } ]
+
+[[rules]]
+name = "不是测试文件"
+when = { all = [
+  { any_file = { include = ["src/*"] } },
+  { not = { any_file = { include = ["**/test/**"] } } },
+] }
+load = [ "docs/webidl.md" ]
+
+[[rules]]
+name = "加载目标不存在"
+when = { any_file = { ext = [".cpp"] } }
+load = [ { file = "docs/nope.md" } ]
+`,
+);
+
+check('上下文规则：--check 通过时退出 0', () => {
+  const output = runIn(['context', '.', '--check'], ctx);
+  assert.ok(output.includes('规则有效'), output);
+});
+
+check('上下文规则：未知字段/空 when 会被拒并退出 2', () => {
+  const broken = join(sandbox, 'broken-rules.json');
+  writeFileSync(
+    broken,
+    JSON.stringify({ version: 1, rules: [{ name: '坏的', when: { nonsense: true }, load: [{ file: 'x.md' }] }] }),
+  );
+  const { code, output } = failIn(['context', '.', '--check', '--rules', broken], ctx);
+  assert.equal(code, 2, output);
+  assert.ok(output.includes('未知字段'), output);
+  assert.ok(output.includes('when'), output);
+});
+
+check('上下文规则：all + any_file 组合按预期命中，且按扩展名区分', () => {
+  const hit = runIn(['context', '.', '--changed', 'dom/x.webidl', 'dom/y.cpp', '--json'], ctx);
+  const report = JSON.parse(hit);
+  const names = report.matched.map((match) => match.rule);
+  assert.ok(names.includes('WebIDL 实现'), names.join(','));
+  const miss = JSON.parse(runIn(['context', '.', '--changed', 'dom/x.webidl', '--json'], ctx));
+  assert.ok(
+    !miss.matched.map((match) => match.rule).includes('WebIDL 实现'),
+    '只有 .webidl 时不该命中（all 要求两类同时出现）',
+  );
+});
+
+check('上下文规则：all_files 用于 patch 形状（只改文档）', () => {
+  const report = JSON.parse(runIn(['context', '.', '--changed', 'docs/a.md', 'docs/b.md', '--json'], ctx));
+  const names = report.matched.map((match) => match.rule);
+  assert.ok(names.includes('只改文档'), names.join(','));
+  const mixed = JSON.parse(runIn(['context', '.', '--changed', 'docs/a.md', 'src/a.cpp', '--json'], ctx));
+  assert.ok(!mixed.matched.map((match) => match.rule).includes('只改文档'), '混了源码就不该算「只改文档」');
+});
+
+check('上下文规则：not 谓词生效', () => {
+  const ok = JSON.parse(runIn(['context', '.', '--changed', 'src/main.cpp', '--json'], ctx));
+  assert.ok(ok.matched.map((match) => match.rule).includes('不是测试文件'), 'src 下非测试文件应命中');
+  const excluded = JSON.parse(runIn(['context', '.', '--changed', 'src/test/main.cpp', '--json'], ctx));
+  assert.ok(!excluded.matched.map((match) => match.rule).includes('不是测试文件'), 'not 命中时该规则应被排除');
+});
+
+check('上下文规则：include + exclude + ext 三件套（Firefox 前端那条的形状）', () => {
+  const hit = JSON.parse(runIn(['context', '.', '--changed', 'src/app.ts', '--json'], ctx));
+  assert.ok(hit.matched.map((match) => match.rule).includes('前端约定'), 'src 下的 .ts 应命中');
+  const excluded = JSON.parse(runIn(['context', '.', '--changed', 'src/test/app.ts', '--json'], ctx));
+  assert.ok(!excluded.matched.map((match) => match.rule).includes('前端约定'), 'exclude 的路径应被排除');
+  const wrongExt = JSON.parse(runIn(['context', '.', '--changed', 'src/app.md', '--json'], ctx));
+  assert.ok(!wrongExt.matched.map((match) => match.rule).includes('前端约定'), '扩展名不符就不该命中');
+});
+
+check('上下文规则：--rules 也可以指向 JSON（迁移期两种格式都认）', () => {
+  const jsonRules = join(sandbox, 'rules-as-json.json');
+  writeFileSync(
+    jsonRules,
+    JSON.stringify({
+      version: 1,
+      rules: [{ name: 'JSON 规则', when: { any_file: { ext: ['.cpp'] } }, load: [{ file: 'docs/webidl.md' }] }],
+    }),
+  );
+  const report = JSON.parse(
+    runIn(['context', '.', '--changed', 'src/a.cpp', '--json', '--rules', jsonRules], ctx),
+  );
+  assert.ok(report.matched.map((match) => match.rule).includes('JSON 规则'), JSON.stringify(report.matched));
+});
+
+check('上下文规则：同一份文件被多条规则加载时全局去重', () => {
+  const report = JSON.parse(runIn(['context', '.', '--changed', 'src/a.cpp', '--json'], ctx));
+  const count = report.load.filter((path) => path === 'docs/webidl.md').length;
+  assert.equal(count, 1, `docs/webidl.md 应只出现一次，实际 ${count}：${report.load.join(',')}`);
+});
+
+check('上下文规则：技能名会解析成已安装的 SKILL.md 并带上摘要', () => {
+  const report = JSON.parse(runIn(['context', '.', '--changed', 'x.webidl', 'y.cpp', '--json'], ctx));
+  const skill = report.matched
+    .find((match) => match.rule === 'WebIDL 实现')
+    .load.find((item) => item.kind === 'skill');
+  assert.ok(skill !== undefined, JSON.stringify(report.matched));
+  assert.equal(skill.exists, true, JSON.stringify(skill));
+  assert.ok(skill.path.endsWith('prompt-placement/SKILL.md'), skill.path);
+  assert.ok((skill.summary ?? '').length > 0, '技能摘要应来自 frontmatter');
+});
+
+function captureIn(args, cwd) {
+  try {
+    const output = execFileSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8', env: gitEnv });
+    return { code: 0, output };
+  } catch (error) {
+    return { code: error.status, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  }
+}
+
+check('上下文规则：load 目标缺失只警告、不致命（对齐 Firefox 的处理）', () => {
+  const { code, output } = captureIn(['context', '.', '--changed', 'src/a.cpp'], ctx);
+  assert.equal(code, 0, output);
+  assert.ok(output.includes('docs/nope.md'), `应报告缺失的加载目标，实际：\n${output}`);
+  assert.ok(output.includes('不存在'), output);
+});
+
+check('上下文规则：apply 后输出可读的「该读什么」并说明注入顺序', () => {
+  const output = runIn(['context', '.', '--changed', 'dom/x.webidl', 'dom/y.cpp'], ctx);
+  assert.ok(output.includes('# 本次改动的上下文'), output);
+  assert.ok(output.includes('为什么：'), output);
+  assert.ok(output.includes('放在 diff 之前'), output);
+});
+
+check('上下文规则：--list 列出规则与判据', () => {
+  const output = runIn(['context', '.', '--list'], ctx);
+  assert.ok(output.includes('WebIDL 实现'), output);
+  assert.ok(output.includes('至少一个改动文件'), output);
+  assert.ok(output.includes('扩展名 .webidl'), output);
+});
+
+check('上下文规则：没有规则文件时退出 1 并给出生成命令', () => {
+  const empty = join(sandbox, 'ctx-empty');
+  mkdirSync(empty, { recursive: true });
+  const { code, output } = failIn(['context', '.'], empty);
+  assert.equal(code, 1, output);
+  assert.ok(output.includes('context --init'), output);
+});
+
+check('上下文规则：--init 生成模板且不覆盖已有文件', () => {
+  const fresh = join(sandbox, 'ctx-fresh');
+  mkdirSync(fresh, { recursive: true });
+  const first = runIn(['context', '.', '--init'], fresh);
+  assert.ok(first.includes('已创建'), first);
+  assert.ok(existsSync(join(fresh, '.agents', 'context-rules.toml')));
+  const second = failIn(['context', '.', '--init'], fresh);
+  assert.equal(second.code, 1, second.output);
+  assert.ok(second.output.includes('已存在'), second.output);
+});
+
+check('上下文规则：--since <ref> 从 git 取改动文件', () => {
+  const repo = join(sandbox, 'ctx-git');
+  mkdirSync(join(repo, 'docs'), { recursive: true });
+  mkdirSync(join(repo, '.agents'), { recursive: true });
+  writeFileSync(join(repo, '.agents', 'context-rules.toml'), readFileSync(rulesFile));
+  gitTry(['init', '-q'], repo);
+  writeFileSync(join(repo, 'docs', 'frontend.md'), 'one\n');
+  gitTry(['add', '-A'], repo);
+  gitTry(['commit', '-qm', 'init'], repo);
+  writeFileSync(join(repo, 'docs', 'frontend.md'), 'two\n');
+  const output = runIn(['context', '.', '--since', 'HEAD', '--json'], repo);
+  const report = JSON.parse(output);
+  assert.deepEqual(report.changed, ['docs/frontend.md']);
+  assert.equal(report.changed_source, 'git diff --name-only HEAD');
+  const ranged = JSON.parse(runIn(['context', '.', '--range', 'HEAD...HEAD', '--json'], repo));
+  assert.deepEqual(ranged.changed, [], '三点比较到自己应得到空集');
+  assert.equal(ranged.changed_source, 'git diff --name-only HEAD...HEAD');
+});
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {

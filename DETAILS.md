@@ -24,6 +24,9 @@
 | 检查安装状态与 CLI | `agentscaffold doctor [path] [--scope user\|project] [--json]` |
 | 检索代码（定义/标识符/文本/调用关系） | `agentscaffold search <关键词> [--kind define\|id\|text\|callers\|callees\|impact] [--path <dir>] [--glob <g>] [--ext <e>] [--limit N] [--json]` |
 | 进检索 TUI | 不带参数运行 `agentscaffold`（只在真终端里） |
+| 生成上下文规则模板 | `agentscaffold context --init [path]` |
+| 校验上下文规则 | `agentscaffold context --check [path] [--rules <file>] [--json]` |
+| 看这次改动该读什么 | `agentscaffold context [path] [--since <ref> \| --range <a...b> \| --changed <files...>] [--json]` |
 | 列出随包技能包 | `agentscaffold packs` |
 | 完整许可与 MPL 文件清单 | `agentscaffold --license` |
 | 机器可读许可信息 | `agentscaffold --license --json` |
@@ -99,6 +102,56 @@
   退出码：0 有命中、1 无命中、2 用法错误或缺少所需索引。
 - 调用关系查询命中索引失败时（codegraph 对“找不到符号”也返回 0）会额外提示先用 `--kind id`
   确认准确符号名，避免把“查不到”显示成“没有调用者”。
+
+## 上下文规则（`agentscaffold context`）
+
+照 Firefox 的 `review-context.toml`（Review Helper）实现，格式**保持 TOML**、谓词与 `load` 写法一致，
+所以那份文件里的规则改改路径就能用（解析用 TOML 1.0 实现 `smol-toml`，不自己写子集解析器）。
+
+- 规则文件：`<项目>/.agents/context-rules.toml`；`--rules <path>` 可指向别处（`.json` 也认，便于迁移）。
+- 谓词：`any_file`（至少一个改动文件匹配）、`all_files`（每个改动文件都匹配，用于「只改文档」这类
+  形状规则）、`all` / `any` / `not` 组合；文件谓词 `include` / `exclude` / `ext`。
+  **通配符语义与 Firefox 一致**：`*` 也匹配 `/`（Python `fnmatchcase`），所以 `dom/media/**` 匹配整段前缀。
+- `load`：`{ type = "file", path = "..." }`（与 Firefox 相同）、`{ path|file = "..." }`、
+  `{ skill = "已安装技能名" }`（我们解析成技能目录里的 `SKILL.md` 并附上 description 摘要）、
+  或裸字符串路径。相对路径按规则文件所在目录解析。
+- 多条规则命中 → **全局去重**；某个 `load` 目标不存在 → 报告后继续（对齐 Firefox 的非致命处理）。
+- `--check` 负 validation 的责任（对应 `mach lint review-context.toml`）：未知字段、`when` 缺条件键、
+  谓词类型不对、`load` 为空或没有目标，都会被拒并退出 2。
+- 输出是「该读什么」的清单 + 每条的命中理由（markdown / `--json`）。**注入不属于本工具**：
+  Firefox 是 Review Helper 把内容作为受信任 `<context>` 放在 diff 之前，我们只产出这份清单，
+  谁能消费由宿主决定。
+- 取改动文件：`--since <ref>` = `git diff --name-only <ref>`（工作区 vs 该 ref，所以 `--since HEAD`
+  看的就是未提交改动）；`--range <a...b>` = 原样传给 git 的三点比较（PR 式）；`--changed` 手动指定。
+  早先两处都用 `<ref>...HEAD` 是错的：`--since HEAD` 会变成 HEAD 与自分之比较，永远是空集。
+
+## Firefox 的 AI 机制：逐条取舍
+
+判定标准是"离开 Mozilla 这个环境还能不能用"，不是"我实现起来累不累"。
+
+| Firefox 的做法 | 判断 | 本项目的落点 |
+| --- | --- | --- |
+| 根 `AGENTS.md` 短而硬（73 行）+ 模块细节下沉 | 通用 | 已实现（`init` 生成模板；原理见 `prompt-placement` 技能） |
+| 子目录 `AGENTS.md` 就近声明局部约定 | 通用 | 已支持（模板里留了索引位）；体检命令尚缺 |
+| `CLAUDE.md` 只有一行 `@AGENTS.md`（单一真源） | 通用 | 已实现（`--claude`） |
+| `.agents/skills` + `.claude/skills` 双入口 | 通用 | 已实现（默认 `.agents/`，`--claude` 追加） |
+| 技能 `description` 常驻、正文按需、`references/` 分层 | 通用 | 已实现 + 写作约束（见下） |
+| 同一案例给两份（`-cli.md` 工具版 / 通用版） | 通用 | 已写入本文件的技能写作约束 |
+| 技能里带脚本（`file-bug.py`、`trigger-tests.sh`） | 通用 | 已支持（技能目录下任何文件都会随技能安装） |
+| `review-context.toml` 机械触发（本文件上一节） | **通用** | **已实现** `agentscaffold context`，保持 TOML |
+| 规则可被 lint（`mach lint review-context.toml`） | 通用 | 已实现（`context --check`） |
+| 加载失败非致命 + 全局去重 | 通用 | 已实现（有断言） |
+| 把内容作为受信任 `<context>` 注入到 diff 之前 | 半通用：注入是宿主职责 | **只产出清单**，不注入；输出里说明注入顺序 |
+| 外部技能来源（`extraKnownMarketplaces` + `autoUpdate`） | 通用 | **待做**：pack 支持外部来源（git/pkg），目前只随包分发 |
+| `.mcp.json` 声明 MCP 服务器 | 不通用（各家 harness 的 MCP 形态不同，且我们是 CLI） | 丢弃 |
+| `mach` 挂 AI 命令（构建系统入口） | 不通用（Firefox 构建系统专有） | 丢弃；我们的入口就是 `agentscaffold` |
+| 技能 frontmatter 的 `allowed-tools: Bash(searchfox-cli:*)` | 不通用（Claude 专有字段，别的 harness 会忽略） | 改写：依赖用 `pack.json` 的 `cli[]` 声明（含 install/fallback） |
+| `searchfox-cli`（联网查 Mozilla 索引） | 不通用（需联网 + 只覆盖该仓） | **借查询形状、本地重写**（`agentscaffold search`） |
+| `profiler-cli` / `treeherder-cli` 等 Mozilla 专用工具 | 不通用（查的是 Mozilla 服务） | 作为可选 CLI 声明在技能包里，缺了给退路 |
+| Bugzilla / Phabricator 的 MCP 资源（`@moz:…`） | 不通用（Mozilla 服务） | 丢弃 |
+| bugbug 里的扩展谓词（评审/补丁元数据、仓库白名单、`fetch_revision`） | 不通用（评审服务特有） | 丢弃；谓词层留了扩展空间 |
+| `docs/ai-agent-tools/` 把机制写成文档 | 通用 | 已实现（本文件 + README） |
+| 技能"成本纪律"（写明读哪一篇、别整篇塞上下文） | 通用 | 已用在我们的技能里，写入写作约束 |
 
 ## 技能包格式
 
@@ -219,3 +272,9 @@ npm run smoke     # 71 项端到端断言
   `codegraph init` 与 `--kind text` 退路；`--json` 带后端与 `needs_index`；非法 `--kind` 退出 2；
   另外断言 codegraph 在依赖表里是**可选**且写明了退路。装了 codegraph 时会临时给
   `scripts/fixtures/sample-project` 建索引，验证标识符、完整定义正文与调用关系；没装则跳过那三条。
+- **上下文规则**：`--check` 通过/拒绝（未知字段、缺条件键）；`all` + `any_file` 的组合按预期命中，
+  只改一类文件时不命中；`all_files` 用于「只改文档」这类形状规则，混入源码就不算；`not` 生效；
+  `include` + `exclude` + `ext` 三件套（Firefox 前端那条的形状）；同一文件被多条规则加载时全局去重；
+  `{ skill = "..." }` 解析成已安装技能的 `SKILL.md` 并带上 frontmatter 摘要；`load` 目标缺失只警告
+  且退出 0；`--list` 的判据描述可读；无规则文件退出 1 并给 `--init`；`--init` 生成 TOML 模板且不覆盖；
+  `--since HEAD` 从 git 取改动文件、`--range a...b` 走三点比较；`--rules` 指向 `.json` 也认。

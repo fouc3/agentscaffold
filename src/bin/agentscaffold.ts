@@ -6,6 +6,7 @@ import { runLicense } from '../commands/license.js';
 import { runDoctor } from '../commands/doctor.js';
 import { loadPacks } from '../pack/pack.js';
 import { runSearch, runSearchTui } from '../commands/search.js';
+import { runContext } from '../commands/context.js';
 import { interactive } from '../ui/prompt.js';
 import { buildLicenseReport, helpLicenseBlock } from '../license/notice.js';
 import { toolVersion } from '../util/version.js';
@@ -157,6 +158,31 @@ if (argv.includes('--license')) {
         ext: typeof options.ext === 'string' ? options.ext : undefined,
         json: options.json === true,
         limit: Number.parseInt(String(options.limit ?? '30'), 10) || 30,
+      });
+    });
+
+  program
+    .command('context')
+    .description('按改动的文件机械决定该读哪些文档/技能（Firefox review-context.toml 的本地重写：JSON + 本地评估）')
+    .argument('[path]', '项目根目录', process.cwd())
+    .option('--changed <files...>', '手动指定改动文件')
+    .option('--since <ref>', '用 git diff <ref> 取改动文件（工作区 vs 该 ref）')
+    .option('--range <a...b>', '用 PR 式的三点比较，例如 main...HEAD')
+    .option('--rules <path>', '规则文件路径（默认 <项目>/.agents/context-rules.json）')
+    .option('--check', '只校验规则文件', false)
+    .option('--list', '列出规则', false)
+    .option('--init', '生成规则文件模板', false)
+    .option('--json', '输出 JSON', false)
+    .action((path: string, options: Record<string, unknown>) => {
+      process.exitCode = runContext(path, {
+        changed: Array.isArray(options.changed) ? (options.changed as string[]) : [],
+        since: typeof options.since === 'string' ? options.since : undefined,
+        range: typeof options.range === 'string' ? options.range : undefined,
+        rules: typeof options.rules === 'string' ? options.rules : undefined,
+        check: options.check === true,
+        list: options.list === true,
+        init: options.init === true,
+        json: options.json === true,
       });
     });
 

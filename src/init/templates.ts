@@ -105,6 +105,21 @@ ${AGENTS_MARKER_END}
 - 格式与静态检查：
 - 问题跟踪：
 
+## 2. 工具（先查工具，再动手）
+
+不要盲目全仓搜索；先把这几条用上（工具本身不替我们做决定，只是省时间）：
+
+| 想知道 | 用什么 |
+| --- | --- |
+| 某个符号定义/实现在哪（完整源码块，不是一行上下文） | \`agentscaffold search <符号> --kind define\` （需要项目已建代码索引） |
+| 精确找标识符（而不是文本命中） | \`agentscaffold search <符号> --kind id\` （需要索引） |
+| 谁调用了它 / 它调用了谁 / 改它影响谁 | \`agentscaffold search <符号> --kind callers\\|callees\\|impact\` （需要索引） |
+| 纯文本搜索（可限路径与扩展名） | \`agentscaffold search '<文本>' --kind text --glob 'src/*'\` （无需索引） |
+| 这次改动该读哪些文档/技能 | \`agentscaffold context --since HEAD\` （按 \`.agents/context-rules.json\` 机械判定） |
+
+索引类查询在未建索引时会明确报错并给出该执行的命令，不会给你错误的答案——那就先用文本搜索，
+或者按提示建索引。规则文件本身用 \`agentscaffold context --check\` 校验。
+
 ## 2. 常用命令
 
 | 目的 | 命令 |

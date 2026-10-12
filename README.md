@@ -204,6 +204,42 @@ Mozilla Foundation 的商标。本项目与 Mozilla 无隶属或背书关系，�
 所以我们只借它的**查询形状**（定义 / 标识符 / 调用关系 + 适合给 LLM 读的输出），
 换成完全本地的后端实现，代码不复用。</sub>
 
+## 这次改动该读什么：机械触发
+
+改一个 WebIDL 文件会牵连到 C++ 实现，这种「一看文件就知道该看哪份文档」的事，不该指望 AI 自己想起来。
+Firefox 用根目录的 `review-context.toml` 解决：改动文件一确定，规则就机械决定加载哪些资料。
+本项目照这个机制做了一份（**同样的 TOML 写法、同样的谓词**，规则可以搬过来用）：
+
+```toml
+# .agents/context-rules.toml
+version = 1
+
+[[rules]]
+name = "WebIDL 实现"
+description = "补丁同时碰 WebIDL 与 C++ 时，加载 Web 标准实现约定。"
+when = { all = [
+  { any_file = { ext = [".webidl"] } },
+  { any_file = { ext = [".h", ".cpp"] } },
+] }
+load = [
+  { type = "file", path = "docs/webidl-guide.md" },
+  { skill = "perf-regression-triage" },   # 也可以直接写已安装的技能名
+]
+```
+
+用起来就三件事：
+
+    agentscaffold context --init            # 生成带注释的模板
+    agentscaffold context --check           # 校验（对应 Firefox 的 mach lint review-context.toml）
+    agentscaffold context --since HEAD      # 看这次改动按规则该读哪些文档/技能
+
+判据是机械的：`any_file`（至少一个改动文件满足）、`all_files`（每个都满足，用于「只改文档」这类形状规则）、
+以及 `all` / `any` / `not` 组合；文件谓词有 `include` / `exclude` / `ext`，通配符语义与 Firefox 一致
+（`*` 也匹配 `/`）。多条规则命中时同一份内容只加载一次；某个 `load` 目标不存在只警告、不致命。
+
+它只负责算出「该读什么」，**不替你往别人的 prompt 里塞东西**——评审机器人、CI、agent 谁都能消费这份结果
+（`--json` 给结构化输出）。这跟「谁负责注入」是两件事，Firefox 那边是 Review Helper 在注入。
+
 ## 想再给它加一个经验包
 
 在 `packs/` 下新建一个目录，放一个 `pack.json`（写明包名、说明、包含哪些技能、依赖哪些工具），
