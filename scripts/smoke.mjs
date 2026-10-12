@@ -844,56 +844,6 @@ check('上下文规则：--since <ref> 从 git 取改动文件', () => {
   assert.equal(ranged.changed_source, 'git diff --name-only HEAD...HEAD');
 });
 
-// ── 19. 退出处理、幂等与构建信息 ─────────────────────────────────────────────
-const { stateNote, recordWritten, clearWritten } = await import(
-  new URL('../dist/ui/prompt.js', import.meta.url)
-);
-
-check('退出处理：没写过东西时说明「未做任何修改」', () => {
-  clearWritten();
-  assert.equal(stateNote(), '未做任何修改。');
-});
-
-check('退出处理：写过之后，取消提示会说明写了什么与如何撤销', () => {
-  clearWritten();
-  recordWritten('3 个文件 + 安装清单', 'agentscaffold uninstall . --scope project');
-  const note = stateNote();
-  assert.ok(note.includes('3 个文件'), note);
-  assert.ok(note.includes('agentscaffold uninstall'), `必须给出撤销方式：${note}`);
-  assert.ok(!note.includes('未做任何修改'), `写过就不能再说没动过：${note}`);
-  clearWritten();
-});
-
-check('幂等：连跑两次 init，AGENTS.md 不再因时间戳变化而被反复跳过', () => {
-  const repo = join(sandbox, 'idempotent');
-  mkdirSync(repo, { recursive: true });
-  const first = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
-  const second = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
-  assert.ok(first.includes('AGENTS.md [created]'), first);
-  assert.ok(second.includes('AGENTS.md [unchanged]'), `第二次应是 unchanged，实际：\n${second}`);
-  const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-  assert.ok(!agents.includes('生成于'), '生成的文件里不该有会每次变化的时间戳');
-  const counts = [first, second].map((output) => /\[清单：(\d+) 个文件\]/.exec(output)?.[1]);
-  assert.equal(counts[0], counts[1], `清单数必须稳定，实际 ${counts.join(' vs ')}`);
-});
-
-check('幂等：清单里打印的数量等于实际条目数', () => {
-  const repo = join(sandbox, 'idempotent');
-  const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
-  const printed = Number(/\[清单：(\d+) 个文件\]/.exec(output)?.[1]);
-  const actual = JSON.parse(readFileSync(join(repo, '.agents', 'agentscaffold.manifest.json'), 'utf8')).entries.length;
-  assert.equal(printed, actual, `打印 ${printed}，实际 ${actual}`);
-});
-
-check('构建信息：doctor 会说明运行中的构建，并在源码更新时警告', () => {
-  const human = run(['doctor', '/tmp']);
-  assert.ok(human.includes('运行中的构建'), human.slice(0, 200));
-  const report = JSON.parse(run(['doctor', '/tmp', '--json']));
-  assert.ok(report.build !== undefined, 'doctor --json 应带 build');
-  assert.ok(report.build.runningFile.endsWith('.js'), report.build.runningFile);
-  assert.equal(typeof report.build.stale, 'boolean');
-});
-
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {

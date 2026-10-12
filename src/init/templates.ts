@@ -90,7 +90,7 @@ export function agentsMd(context: TemplateContext): string {
   return `# ${context.projectName} — 开发要求（AGENTS.md）
 
 ${AGENTS_MARKER}
-> 本文件由 agentscaffold v${context.toolVersion} 生成，作用域：${user ? '用户级（本机所有项目）' : '项目级（本仓库）'}。
+> 本文件由 agentscaffold v${context.toolVersion} 生成于 ${context.generatedAt}，作用域：${user ? '用户级（本机所有项目）' : '项目级（本仓库）'}。
 > 它是**本${user ? '机' : '仓库'}对 AI agent 的唯一权威约定**。${context.claudeEntryNote}
 > 重新运行 \`agentscaffold init\` **不会**覆盖本文件（除非显式 \`--force\`），请在这里持续增删。
 ${AGENTS_MARKER_END}
