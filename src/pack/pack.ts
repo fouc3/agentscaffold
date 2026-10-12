@@ -10,8 +10,14 @@ export interface PackCli {
   why?: string;
   /** Accepted minimum version, compared against the first dotted number found. */
   minVersion?: string;
-  /** Command a human can run to install it. Never executed by this tool. */
+  /** Command a human can run to install it. Never executed as a shell string. */
   install?: string;
+  /**
+   * The same install as an explicit argv array. When present, `init` may *offer* to run it
+   * (only with the user's consent); when absent the tool is only ever reported. argv keeps us
+   * from shell-interpreting pack data.
+   */
+  installArgv?: string[];
   /** What still works when the CLI is absent. */
   fallback?: string;
 }

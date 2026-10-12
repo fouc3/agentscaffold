@@ -43,6 +43,7 @@ if (argv.includes('--license')) {
     .option('--no-skills', '只写文档，不安装技能包')
     .option('--accept-mpl-notice', '非交互模式下确认接受第三方许可（项目级安装必需）', false)
     .option('--commit', '项目级：完成后把本次改动提交到当前仓库（非交互模式需显式指定；不会 push）', false)
+    .option('--install-tools', '安装缺失的可选工具（只装各技能包声明了安装命令的；非交互模式需显式指定）', false)
     .action(async (path: string, options: Record<string, unknown>) => {
       const skillsOption = options.skills;
       process.exitCode = await runInit(path, {
@@ -61,6 +62,7 @@ if (argv.includes('--license')) {
         noSkills: skillsOption === false,
         acceptMplNotice: options.acceptMplNotice === true,
         commit: options.commit === true,
+        installTools: options.installTools === true,
       });
     });
 

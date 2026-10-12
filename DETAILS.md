@@ -14,6 +14,7 @@
 | 只写文档、不装技能 | `agentscaffold init --no-skills` |
 | 覆盖已有文件 | `agentscaffold init --force` |
 | 完成后提交本次改动（项目级） | `agentscaffold init --scope project --accept-mpl-notice --commit` |
+| 顺便安装缺失的可选工具 | `agentscaffold init --install-tools` |
 | 卸载（自动探测作用域） | `agentscaffold uninstall` |
 | 只卸载某一作用域 | `agentscaffold uninstall --scope user\|project` |
 | 预览卸载 | `agentscaffold uninstall --dry-run` |
@@ -60,6 +61,18 @@
 - 删除完自底向上清理被清空的目录（含 `.agents` 本身），非空目录与清单外文件一律不动。
 - 两个作用域都没有清单 → 报错 exit 2，不做任何猜测性删除；双作用域 + 非交互 → 必须 `--scope`。
 
+## 可选工具安装
+
+`init` 在报告完 CLI 状态之后，会问一次「是否安装缺失的可选工具？」，默认一个都不勾选：
+
+- **只有技能包显式声明 `installArgv` 的工具才会被提供**。只写 `install`（给人看的建议）是不够的，
+  包作者不写 `installArgv` 就等于没授权本工具去执行任何东西。
+- 安装命令以 **argv 数组**执行，从不经过 shell，因此技能包里的数据无法注入 shell 语法。
+- 非交互模式需要显式 `--install-tools`；不加就只报告。
+- 失败会带上该执行的完整命令；识别为权限问题（如 `npm i -g` 写 `/usr`）时提示你自己执行，
+  **不会**自动加 sudo、不重试。
+- 单个安装最长 15 分钟，超时终止并报告。
+
 ## 技能包格式
 
 ```
@@ -82,6 +95,7 @@ packs/<包名>/
 | `required` | 缺失是否导致技能不可用 |
 | `why` | 为什么需要它（`doctor` 报告里显示） |
 | `install` | 建议的安装命令（只显示，不执行） |
+| `installArgv` | 同上，但用 argv 数组写。**写了它才会在 `init` 里被提供安装**，从不走 shell |
 | `fallback` | 没有它时怎么办 |
 
 两条写作约束：
@@ -154,3 +168,6 @@ npm run smoke     # 50 项端到端断言
   非交互不加 `--commit` 不提交、用户级不触发提交步骤、未初始化仓库时不加 `--commit`
   绝不 `git init`、加了会先 `git init -b main` 再提交且无远程、缺 git 身份时给出可照做的
   `git config` 提示且不产生空提交。
+- **可选工具**：只挑「缺失 + 声明了 `installArgv`」的；安装命令以 argv 传递（断言 `$HOME;rm -rf`
+  这类参数不被 shell 解释）；失败时识别权限问题；随包技能包确实声明了可安装的工具；
+  非交互不加 `--install-tools` 时只报告不安装。

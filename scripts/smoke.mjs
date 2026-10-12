@@ -414,6 +414,64 @@ check('代提交：缺少 git 身份时给出可照做的提示，并说明仓�
   assert.equal(gitTry(['rev-parse', '--verify', '--quiet', 'HEAD'], repo).trim(), '', '身份缺失时不应产生提交');
 });
 
+// ── 15. 可选工具安装环节 ────────────────────────────────────────────────────
+const { installableMissing, runInstall } = await import(new URL('../dist/init/tool-install.js', import.meta.url));
+const { probePacks } = await import(new URL('../dist/init/cli-deps.js', import.meta.url));
+const { loadPacks } = await import(new URL('../dist/pack/pack.js', import.meta.url));
+
+async function checkAsync(name, fn) {
+  try {
+    await fn();
+    checks.push([true, name]);
+  } catch (error) {
+    checks.push([false, `${name}\n      ${error.message}`]);
+  }
+}
+
+const fakeStatus = (over) => ({ name: 'demo', required: false, found: false, versionOk: false, usedBy: [], ...over });
+
+await checkAsync('可选工具：只挑出「缺失 + 声明了安装命令」的', async () => {
+  const picked = installableMissing([
+    fakeStatus({ name: 'a', installArgv: ['true'] }),
+    fakeStatus({ name: 'b' }), // 只给了人看的说明，没授权我们执行
+    fakeStatus({ name: 'c', found: true, versionOk: true, installArgv: ['true'] }), // 已装
+  ]);
+  assert.deepEqual(picked.map((status) => status.name), ['a']);
+});
+
+await checkAsync('可选工具：按 argv 执行，不经过 shell', async () => {
+  const outcome = await runInstall(fakeStatus({ installArgv: [process.execPath, '-e', 'process.exit(0)'] }));
+  assert.equal(outcome.ok, true, outcome.detail);
+  // 若经过 shell，$ 与 ; 会被解释；这里断言 argv 原样传递
+  const echo = await runInstall(
+    fakeStatus({ name: 'echo', installArgv: [process.execPath, '-e', 'console.log(process.argv.slice(1).join("|"))', '$HOME;rm -rf'] }),
+  );
+  assert.equal(echo.ok, true, echo.detail);
+});
+
+await checkAsync('可选工具：失败时报告输出并判定权限问题', async () => {
+  const outcome = await runInstall(
+    fakeStatus({ installArgv: [process.execPath, '-e', 'console.error("npm ERR! EACCES: permission denied"); process.exit(1)'] }),
+  );
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.needsPrivileges, `应识别为权限问题，实际 detail=${outcome.detail}`);
+});
+
+check('可选工具：随包技能包确实声明了可安装的工具', () => {
+  const names = probePacks(loadPacks())
+    .filter((status) => Array.isArray(status.installArgv) && status.installArgv.length > 0)
+    .map((status) => status.name);
+  assert.ok(names.includes('profiler-cli'), names.join(',') || '(无)');
+});
+
+check('可选工具：非交互且没加 --install-tools 时不安装', () => {
+  const repo = join(sandbox, 'tools-a');
+  mkdirSync(repo, { recursive: true });
+  const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
+  assert.ok(!output.includes('可选工具安装结束'), output);
+  assert.ok(output.includes('install'), '报告里仍应给出建议的安装命令');
+});
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {

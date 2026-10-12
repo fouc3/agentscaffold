@@ -12,6 +12,7 @@ export interface ToolStatus {
   versionOk: boolean;
   why?: string;
   install?: string;
+  installArgv?: string[];
   fallback?: string;
   usedBy: string[];
 }
@@ -65,6 +66,7 @@ export function collectToolRequirements(packs: LoadedPack[]): Array<PackCli & { 
       } else {
         existing.usedBy.push(pack.name);
         existing.required = existing.required || cli.required;
+        existing.installArgv ??= cli.installArgv;
       }
     }
   }
@@ -83,6 +85,7 @@ export function probePacks(packs: LoadedPack[]): ToolStatus[] {
       versionOk: probed.found && meetsMinimum(probed.version, cli.minVersion),
       why: cli.why,
       install: cli.install,
+      installArgv: cli.installArgv,
       fallback: cli.fallback,
       usedBy: cli.usedBy,
     };

@@ -51,6 +51,7 @@
       "why": "读取 Firefox Profiler 的 profile（Gecko 系项目）",
       "minVersion": "0.10.0",
       "install": "npm install -g @firefox-devtools/profiler-cli@latest",
+      "installArgv": ["npm", "install", "-g", "@firefox-devtools/profiler-cli@latest"],
       "fallback": "换成你技术栈的采样器（samply / perf / py-spy / node --cpu-prof），按 references/adapters.md 的同一流程分析"
     },
     {
@@ -58,6 +59,7 @@
       "required": false,
       "why": "Mozilla 系 CI 的作业与性能数据（仅适配器之一）",
       "install": "cargo install treeherder-cli",
+      "installArgv": ["cargo", "install", "treeherder-cli"],
       "fallback": "用 curl 直连告警源 REST API，见 references/adapters.md"
     }
   ]

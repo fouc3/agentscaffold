@@ -13,7 +13,8 @@ import {
 } from '../init/manifest.js';
 import { maybeCommit } from './uninstall.js';
 import { loadPacks, type LoadedPack } from '../pack/pack.js';
-import { formatToolDetails, formatToolLine, probePacks } from '../init/cli-deps.js';
+import { formatToolDetails, formatToolLine, probePacks, type ToolStatus } from '../init/cli-deps.js';
+import { installableMissing, runInstalls } from '../init/tool-install.js';
 import { createProgress } from '../ui/progress.js';
 import { getGlyphs } from '../ui/glyphs.js';
 import { wrapToWidth } from '../ui/width.js';
@@ -32,6 +33,8 @@ export interface InitFlags {
   acceptMplNotice: boolean;
   /** Non-interactive opt-in for the "commit this run?" step; the TUI asks instead. */
   commit: boolean;
+  /** Non-interactive opt-in for installing the missing optional tools; the TUI asks instead. */
+  installTools: boolean;
 }
 
 function parseScope(value: string | undefined): Scope {
@@ -281,6 +284,60 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       toolLines.push(...formatToolDetails(status));
     }
     process.stdout.write(`${toolLines.join('\n')}\n`);
+  }
+
+  // Optional tool packages. Offered only for tools whose pack declared a runnable argv, and
+  // installed only when the user picks them (or passes --install-tools); nothing by default.
+  if (!flags.dryRun) {
+    const missing = installableMissing(tools);
+    if (missing.length > 0) {
+      let selected: ToolStatus[] = [];
+      if (tty) {
+        const picked = answer<string[]>(
+          await clack.multiselect<string>({
+            message: '是否安装缺失的可选工具？',
+            options: missing.map((status) => ({
+              value: status.name,
+              label: status.name,
+              hint: status.install ?? (status.installArgv ?? []).join(' '),
+            })),
+            initialValues: [],
+          }),
+        );
+        selected = missing.filter((status) => picked.includes(status.name));
+      } else if (flags.installTools) {
+        selected = missing;
+      }
+
+      if (selected.length > 0) {
+        const spinner = tty ? clack.spinner() : undefined;
+        const outcomes = await runInstalls(selected, (status) => {
+          const command = (status.installArgv ?? []).join(' ');
+          if (spinner === undefined) process.stdout.write(`安装 ${status.name}：${command}\n`);
+          else spinner.message(`安装 ${status.name}：${command}`);
+        });
+        spinner?.stop('可选工具安装结束');
+
+        const lines: string[] = [];
+        for (const outcome of outcomes) {
+          if (outcome.ok) {
+            lines.push(`  ${green('已安装')} ${outcome.name}`);
+          } else {
+            lines.push(`  ${yellow('未安装')} ${outcome.name}：${outcome.detail.split('\n')[0] ?? ''}`);
+            if (outcome.needsPrivileges) {
+              lines.push(`      ${dim(`看起来是权限问题，请自己执行：${outcome.command}`)}`);
+            }
+          }
+        }
+        process.stdout.write(`${lines.join('\n')}\n`);
+
+        // Re-probe so the user sees the new state instead of a stale "missing".
+        const names = new Set(selected.map((status) => status.name));
+        for (const status of probePacks(plan.packs).filter((item) => names.has(item.name))) {
+          process.stdout.write(`  ${formatToolLine(status)}\n`);
+        }
+      }
+    }
   }
 
   // Completion copy — scope-specific, one licence pointer, never the full wall.
