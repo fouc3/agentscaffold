@@ -116,10 +116,12 @@ scripts/smoke.mjs    端到端冒烟（不碰真实 HOME）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 24 项端到端断言
+npm run smoke     # 28 项端到端断言
 ```
 
 冒烟测试覆盖：项目级未确认声明必须被拒绝且不落盘、`--claude` 才动 `.claude/`、
 重复运行幂等、`--dry-run` 不写盘、用户级安装不污染 HOME 根与 `AGENTS.md`、
 `CLAUDE.md` 的 `@` 导入必须解析到真实存在的 `AGENTS.md`（两种作用域各验一次）、
-`--license --json` 结构，以及「`AGENTS.md` 里不得混入 MPL 内容」。
+`--license --json` 结构、「`AGENTS.md` 里不得混入 MPL 内容」，以及
+**进度条帧宽在任何终端列宽下都不超过 `columns - 1`**（超宽会折行，使 `\r` 失效、
+每帧新起一行；详见 `src/ui/progress.ts` 的注释）。

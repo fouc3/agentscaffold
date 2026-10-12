@@ -153,6 +153,35 @@ check('--skills 过滤：未选中的包不安装', () => assert.ok(!existsSync(
 check('--skills 过滤：文档仍然写入', () => assert.ok(existsSync(join(filtered, 'AGENTS.md'))));
 check('doctor 可运行', () => assert.ok(run(['doctor', project]).includes('agentscaffold doctor')));
 
+// ── 11. 进度条不得超出终端宽度（曾因折行导致每帧新起一行）────────────────────
+const { buildProgressLine, displayWidth, truncateToWidth, visibleWidth } = await import(
+  new URL('../dist/ui/progress.js', import.meta.url)
+);
+check('进度：按显示宽度计量（CJK 算 2 格）', () => {
+  assert.equal(displayWidth('中文abc'), 7);
+});
+check('进度：截断不劈开宽字符', () => {
+  const out = truncateToWidth('中文标签abc', 5);
+  assert.equal(displayWidth(out), 5);
+  assert.ok(out.endsWith('…'), out);
+});
+check('进度：任何终端宽度下都不超出（不折行）', () => {
+  const label = '/very/long/agentscaffold/path/'.repeat(4) + '中文标签.md';
+  for (const columns of [12, 20, 33, 40, 80, 120, 200]) {
+    const line = buildProgressLine(label, 0.42, columns);
+    const width = visibleWidth(line);
+    assert.ok(width <= columns - 1, `columns=${columns} 时行宽 ${width} > ${columns - 1}，会折行`);
+  }
+});
+check('进度：SGR 转义不计入宽度', () => {
+  assert.equal(visibleWidth('\u001b[2mabc\u001b[0m'), 3);
+});
+check('进度：路径类标签保留尾部（文件名可见）', () => {
+  const line = buildProgressLine('.agents/skills/perf-regression-triage/THIRD-PARTY-NOTICES.md', 0.9, 60);
+  assert.ok(line.includes('THIRD-PARTY-NOTICES.md'), line);
+  assert.ok(!line.includes('.agents/skills/perf'), line);
+});
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {
