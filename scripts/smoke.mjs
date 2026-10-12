@@ -154,7 +154,7 @@ check('--skills 过滤：文档仍然写入', () => assert.ok(existsSync(join(fi
 check('doctor 可运行', () => assert.ok(run(['doctor', project]).includes('agentscaffold doctor')));
 
 // ── 11. 进度条不得超出终端宽度（曾因折行导致每帧新起一行）────────────────────
-const { buildProgressLine, displayWidth, truncateToWidth, visibleWidth } = await import(
+const { buildProgressLine, createProgress, displayWidth, truncateToWidth, visibleWidth } = await import(
   new URL('../dist/ui/progress.js', import.meta.url)
 );
 check('进度：按显示宽度计量（CJK 算 2 格）', () => {
@@ -175,6 +175,19 @@ check('进度：任何终端宽度下都不超出（不折行）', () => {
 });
 check('进度：SGR 转义不计入宽度', () => {
   assert.equal(visibleWidth('\u001b[2mabc\u001b[0m'), 3);
+});
+check('进度：每帧以 CR 回到行首，帧内不得含 LF', () => {
+  const chunks = [];
+  const fake = { isTTY: true, columns: 80, write: (chunk) => { chunks.push(chunk); return true; } };
+  const bar = createProgress(3, fake);
+  bar.tick('a/one.md');
+  bar.tick('b/two.md');
+  bar.finish();
+  assert.equal(chunks.length, 3, `应有 3 次写入，实际 ${chunks.length}`);
+  for (const chunk of chunks) {
+    assert.ok(chunk.startsWith('\r'), `帧未以 CR 开头（会新起一行）: ${JSON.stringify(chunk)}`);
+    assert.ok(!chunk.includes('\n'), `帧内出现 LF（会新起一行）: ${JSON.stringify(chunk)}`);
+  }
 });
 check('进度：路径类标签保留尾部（文件名可见）', () => {
   const line = buildProgressLine('.agents/skills/perf-regression-triage/THIRD-PARTY-NOTICES.md', 0.9, 60);
