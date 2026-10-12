@@ -6,6 +6,14 @@
  *
  * Non-interactive rule: no prompts when --yes was passed, when stdin/stdout is not
  * a TTY, or when AGENTSCAFFOLD_NO_TUI=1. Callers must branch on `interactive()`.
+ *
+ * Prompt copy convention (follow it when adding a step):
+ *   1. The message is the decision itself: 「是否 <动作>？」 or 「<动作>？」.
+ *   2. No first person — 「要我…」「帮你…」 are wrong; a CLI does not talk about itself.
+ *   3. The reason or constraint goes in a trailing parenthesis, mirroring codegraph's
+ *      "Install the codegraph CLI on your PATH? (Required so agents can launch …)".
+ *   4. Anything longer than one line belongs in a `note` block above the prompt,
+ *      pre-wrapped with `wrapToWidth()` so clack never hard-breaks a phrase.
  */
 import * as clack from '@clack/prompts';
 
@@ -17,7 +25,7 @@ export function interactive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-export function cancelled(message = 'Cancelled — nothing was written.'): never {
+export function cancelled(message = '已取消，未做任何修改。'): never {
   clack.cancel(message);
   process.exit(0);
 }

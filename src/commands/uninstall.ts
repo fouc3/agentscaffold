@@ -138,7 +138,7 @@ export async function maybeCommit(input: CommitInput, options: { tty: boolean; c
     if (options.tty) {
       const yes = answer<boolean>(
         await clack.confirm({
-          message: `${input.summary}\n当前目录还不是 git 仓库：要我 git init 再提交吗？（只提交本次涉及的路径，不会 push）`,
+          message: `${input.summary}\n当前目录还不是 git 仓库。是否初始化 git 并提交本次改动？（只提交本次涉及的路径，不会 push）`,
           initialValue: false,
         }),
       );
@@ -160,7 +160,7 @@ export async function maybeCommit(input: CommitInput, options: { tty: boolean; c
     if (!hasChange) return { committed: false, skipped: '本次涉及的路径没有改动，无需提交' };
     const yes = answer<boolean>(
       await clack.confirm({
-        message: `${input.summary}\n提交到当前仓库？（只提交本次涉及的路径，不会 push）`,
+        message: `${input.summary}\n是否将本次改动提交到当前仓库？（只提交本次涉及的路径，不会 push）`,
         initialValue: false,
       }),
     );
@@ -210,7 +210,7 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
     // Always offer the choice, even with a single scope installed.
     const picked = answer<string>(
       await clack.select<string>({
-        message: '选择要卸载的安装',
+        message: '卸载哪个安装？',
         options: installs.map((install) => ({
           value: install.scope,
           label: scopeLabel(install.scope),
@@ -240,7 +240,7 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
   if (tty) {
     clack.intro(`${bold('agentscaffold')} uninstall ${dim(`v${toolVersion}`)}`);
     clack.note(summary, '即将移除');
-    const ok = answer<boolean>(await clack.confirm({ message: '确认移除以上文件？', initialValue: false }));
+    const ok = answer<boolean>(await clack.confirm({ message: '是否移除以上文件？', initialValue: false }));
     if (!ok) cancelled('已取消，未删除任何文件。');
   } else {
     process.stdout.write(`${bold('agentscaffold')} uninstall ${flags.dryRun ? '(dry-run)' : ''}\n${summary}\n`);

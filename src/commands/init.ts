@@ -50,7 +50,7 @@ function mplPacks(packs: LoadedPack[]): LoadedPack[] {
  */
 function scopeChoiceMessage(packs: LoadedPack[]): string {
   const mpl = mplPacks(packs).length;
-  return mpl === 0 ? '选择安装范围' : `选择安装范围（含 ${mpl} 个 MPL-2.0 技能包）`;
+  return mpl === 0 ? '安装到哪个作用域？' : `安装到哪个作用域？（本包含 ${mpl} 个 MPL-2.0 技能包）`;
 }
 
 /**
@@ -157,7 +157,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
     if (scope === 'project') {
       clack.note(projectScopeNotice(availablePacks, projectRoot), '项目级安装 · 二次确认');
       const ok = answer<boolean>(
-        await clack.confirm({ message: '继续？', initialValue: false }),
+        await clack.confirm({ message: '是否确认以上内容并继续？', initialValue: false }),
       );
       if (!ok) cancelled('未确认，已取消，未写入任何文件。');
       accepted = true;
@@ -181,7 +181,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
 
     claude = answer<boolean>(
       await clack.confirm({
-        message: '同时初始化 .claude/（Claude Code）？默认只装 .agents/',
+        message: '是否同时初始化 .claude/？（默认只初始化 .agents/）',
         initialValue: flags.claude,
       }),
     );
