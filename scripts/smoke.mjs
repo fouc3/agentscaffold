@@ -154,8 +154,9 @@ check('--skills 过滤：文档仍然写入', () => assert.ok(existsSync(join(fi
 check('doctor 可运行', () => assert.ok(run(['doctor', project]).includes('agentscaffold doctor')));
 
 // ── 11. 进度条不得超出终端宽度（曾因折行导致每帧新起一行）────────────────────
-const { buildProgressLine, createProgress, displayWidth, truncateToWidth, visibleWidth } = await import(
-  new URL('../dist/ui/progress.js', import.meta.url)
+const { buildProgressLine, createProgress } = await import(new URL('../dist/ui/progress.js', import.meta.url));
+const { displayWidth, truncateToWidth, visibleWidth, wrapToWidth } = await import(
+  new URL('../dist/ui/width.js', import.meta.url)
 );
 check('进度：按显示宽度计量（CJK 算 2 格）', () => {
   assert.equal(displayWidth('中文abc'), 7);
@@ -193,6 +194,36 @@ check('进度：路径类标签保留尾部（文件名可见）', () => {
   const line = buildProgressLine('.agents/skills/perf-regression-triage/THIRD-PARTY-NOTICES.md', 0.9, 60);
   assert.ok(line.includes('THIRD-PARTY-NOTICES.md'), line);
   assert.ok(!line.includes('.agents/skills/perf'), line);
+});
+
+// ── 12. note 文案预折行（clack 的 hard wrap 会把词劈开）──────────────────────
+const NOTE_TEXT =
+  '用户级（推荐）：~/.agents/skills，不写任何仓库\n项目级：<project>/.agents/skills，随项目提交，需确认许可';
+check('折行：任意宽度下每行不超预算，且不丢字', () => {
+  for (const width of [16, 24, 32, 48, 76]) {
+    const wrapped = wrapToWidth(NOTE_TEXT, width);
+    for (const line of wrapped.split('\n')) {
+      assert.ok(displayWidth(line) <= width, `width=${width} 出现 ${displayWidth(line)} 格的行: ${line}`);
+    }
+    assert.equal(wrapped.replace(/\n/g, ''), NOTE_TEXT.replace(/\n/g, ''), `width=${width} 折行丢了字`);
+  }
+});
+check('折行：在分句处断，标点留在上一行', () => {
+  const lines = wrapToWidth('项目级：<project>/.agents/skills，随项目提交，需确认许可', 40).split('\n');
+  assert.ok(lines.length >= 2, lines.join('|'));
+  assert.ok(lines[0].endsWith('，'), lines[0]);
+});
+check('折行：超长不可断的词被切开而不是溢出', () => {
+  assert.deepEqual(
+    wrapToWidth('a'.repeat(30), 10).split('\n').map((line) => line.length),
+    [10, 10, 10],
+  );
+});
+check('折行：保留词间空格且不在行尾留空格', () => {
+  const lines = wrapToWidth('alpha beta gamma delta', 11).split('\n');
+  assert.ok(lines.every((line) => displayWidth(line) <= 11), lines.join('|'));
+  assert.equal(lines.join(' '), 'alpha beta gamma delta');
+  assert.ok(!lines.some((line) => line !== line.trimEnd()), '行尾不应有空格');
 });
 
 // ── report ──────────────────────────────────────────────────────────────────

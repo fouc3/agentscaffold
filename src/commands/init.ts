@@ -6,6 +6,7 @@ import { loadPacks, type LoadedPack } from '../pack/pack.js';
 import { formatToolDetails, formatToolLine, probePacks } from '../init/cli-deps.js';
 import { createProgress } from '../ui/progress.js';
 import { getGlyphs } from '../ui/glyphs.js';
+import { wrapToWidth } from '../ui/width.js';
 import { bold, cyan, dim, green, red, yellow } from '../ui/color.js';
 import { answer, cancelled, clack, interactive } from '../ui/prompt.js';
 import { toolVersion } from '../util/version.js';
@@ -31,10 +32,36 @@ function mplPacks(packs: LoadedPack[]): LoadedPack[] {
   return packs.filter((pack) => pack.upstream !== undefined);
 }
 
-/** Install-scope choice copy. Shown once, at scope selection. */
+/**
+ * Install-scope choice copy. Kept short on purpose: clack hard-wraps the message at the terminal
+ * width, so a long parenthetical breaks mid-phrase on narrow terminals.
+ */
 function scopeChoiceMessage(packs: LoadedPack[]): string {
   const mpl = mplPacks(packs).length;
-  return `安装范围（本包含 ${mpl} 个带 MPL-2.0 文件的技能包）`;
+  return mpl === 0 ? '选择安装范围' : `选择安装范围（含 ${mpl} 个 MPL-2.0 技能包）`;
+}
+
+/**
+ * Scope rationale, shown as a note block.
+ *
+ * Option hints are hard-wrapped by clack at the terminal width (`wrapAnsi(..., {hard: true})`),
+ * so a long hint gets split mid-phrase — e.g. `(安装到 ` / `<project>/.agents/skills；…)`. clack
+ * also wraps hints in its own parentheses, so embedding a newline only moves the break: it yields
+ * `(first half` / `second half)`. Keep the hint to a bare path and explain the tradeoff here,
+ * where prose can wrap normally.
+ */
+function scopeExplainer(): string {
+  return [
+    '用户级（推荐）：~/.agents/skills，不写任何仓库',
+    '项目级：<project>/.agents/skills，随项目提交，需确认许可',
+  ].join('\n');
+}
+
+/** Note content is pre-wrapped so clack never has to hard-wrap a phrase mid-word. */
+function noteWidth(): number {
+  const columns = process.stdout.columns;
+  const width = typeof columns === 'number' && columns > 0 ? columns : 80;
+  return Math.max(24, Math.min(width - 8, 76));
 }
 
 /** Project-scope confirmation copy: this is the only place the full wall is shown. */
@@ -94,6 +121,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
 
   if (tty) {
     clack.intro(`${bold('agentscaffold')} init ${dim(`v${toolVersion}`)}`);
+    clack.note(wrapToWidth(scopeExplainer(), noteWidth()), '安装范围');
 
     scope = answer<string>(
       await clack.select<string>({
@@ -103,12 +131,12 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
           {
             value: 'user',
             label: '用户级（推荐）',
-            hint: '安装到 ~/.agents/skills；仅当前用户可用，不进入项目仓库，不把 MPL 文件带入你的项目。',
+            hint: '~/.agents/skills',
           },
           {
             value: 'project',
             label: '项目级',
-            hint: '安装到 <project>/.agents/skills；团队共享，会随项目提交。',
+            hint: '<project>/.agents/skills',
           },
         ],
       }),
