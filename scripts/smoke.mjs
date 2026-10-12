@@ -472,6 +472,59 @@ check('可选工具：非交互且没加 --install-tools 时不安装', () => {
   assert.ok(output.includes('install'), '报告里仍应给出建议的安装命令');
 });
 
+// ── 16. 附加技能包（optional: true）─────────────────────────────────────────
+const addRepo = join(sandbox, 'addon-default');
+mkdirSync(addRepo, { recursive: true });
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], addRepo);
+
+check('附加包：默认不装', () => {
+  assert.ok(existsSync(join(addRepo, '.agents', 'skills', 'perf-regression-triage')));
+  assert.ok(!existsSync(join(addRepo, '.agents', 'skills', 'profile-analysis')));
+});
+
+check('附加包：清单里确实有 optional 包，且默认包没被标 optional', () => {
+  const packs = loadPacks();
+  assert.deepEqual(
+    packs.filter((pack) => pack.optional === true).map((pack) => pack.name),
+    ['profile-analysis'],
+  );
+  assert.ok(packs.some((pack) => pack.name === 'perf-regression-triage' && pack.optional !== true));
+});
+
+const addRepo2 = join(sandbox, 'addon-explicit');
+mkdirSync(addRepo2, { recursive: true });
+runIn(
+  ['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--add-packs', 'profile-analysis'],
+  addRepo2,
+);
+
+check('附加包：--add-packs 才装，并带上自己的 MIT 声明', () => {
+  const dir = join(addRepo2, '.agents', 'skills', 'profile-analysis');
+  assert.ok(existsSync(join(dir, 'SKILL.md')));
+  assert.ok(existsSync(join(dir, 'LICENSE-MIT')));
+  assert.ok(!existsSync(join(dir, 'LICENSE-MPL-2.0')), 'MIT 包不该带 MPL 许可文件');
+});
+
+check('附加包：清单记录追加包，卸载一并清干净', () => {
+  const manifest = manifestOf(addRepo2);
+  assert.ok(manifest.packs.includes('profile-analysis'), manifest.packs.join(','));
+  runIn(['uninstall', '.', '--yes', '--scope', 'project'], addRepo2);
+  assert.ok(!existsSync(join(addRepo2, '.agents')), '附加包的文件与目录也应清干净');
+});
+
+check('附加包：--skills 显式点名也能装（不必走 --add-packs）', () => {
+  const repo = join(sandbox, 'addon-skills');
+  mkdirSync(repo, { recursive: true });
+  runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--skills', 'profile-analysis'], repo);
+  assert.ok(existsSync(join(repo, '.agents', 'skills', 'profile-analysis')));
+  assert.ok(!existsSync(join(repo, '.agents', 'skills', 'perf-regression-triage')), '点名附加包时默认包不应被装上');
+});
+
+check('许可：MIT 附加包的文件不计入 mpl_files', () => {
+  const report = JSON.parse(run(['--license', '--json']));
+  assert.ok(!report.mpl_files.some((file) => file.includes('profile-analysis')));
+});
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {

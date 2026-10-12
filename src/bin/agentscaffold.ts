@@ -7,7 +7,7 @@ import { runDoctor } from '../commands/doctor.js';
 import { loadPacks } from '../pack/pack.js';
 import { buildLicenseReport, helpLicenseBlock } from '../license/notice.js';
 import { toolVersion } from '../util/version.js';
-import { bold, dim, red } from '../ui/color.js';
+import { bold, dim, green, red, yellow } from '../ui/color.js';
 
 const argv = process.argv.slice(2);
 
@@ -39,7 +39,8 @@ if (argv.includes('--license')) {
     .option('--force', '覆盖已存在的文件', false)
     .option('--dry-run', '只预览计划，不写盘', false)
     .option('--claude', '同时初始化 .claude/（默认只初始化 .agents/）', false)
-    .option('--skills <names>', '逗号分隔的技能包名（默认全部）')
+    .option('--skills <names>', '逗号分隔的技能包名（默认全部非附加包）')
+    .option('--add-packs <names>', '逗号分隔的附加技能包名（默认一个都不装）')
     .option('--no-skills', '只写文档，不安装技能包')
     .option('--accept-mpl-notice', '非交互模式下确认接受第三方许可（项目级安装必需）', false)
     .option('--commit', '项目级：完成后把本次改动提交到当前仓库（非交互模式需显式指定；不会 push）', false)
@@ -60,6 +61,13 @@ if (argv.includes('--license')) {
                 .filter((name) => name.length > 0)
             : undefined,
         noSkills: skillsOption === false,
+        addPacks:
+          typeof options.addPacks === 'string'
+            ? options.addPacks
+                .split(',')
+                .map((name) => name.trim())
+                .filter((name) => name.length > 0)
+            : undefined,
         acceptMplNotice: options.acceptMplNotice === true,
         commit: options.commit === true,
         installTools: options.installTools === true,
@@ -116,8 +124,9 @@ if (argv.includes('--license')) {
       }
       process.stdout.write(`${bold('随包技能包')}\n`);
       for (const pack of packs) {
+        const kind = pack.optional === true ? yellow('[附加，默认不装]') : green('[默认安装]');
         process.stdout.write(
-          `  ${pack.name} v${pack.version} ${dim(`[${pack.license}]`)} — ${pack.description}\n`,
+          `  ${pack.name} v${pack.version} ${dim(`[${pack.license}]`)} ${kind} — ${pack.description}\n`,
         );
       }
     });

@@ -1,0 +1,38 @@
+{
+  "name": "profile-analysis",
+  "version": "0.1.0",
+  "description": "附加包：读懂一份性能记录（火焰图 / 采样结果 / CPU profile），把结论写成可行动的清单",
+  "license": "MIT",
+  "optional": true,
+  "skills": [
+    {
+      "name": "profile-analysis",
+      "dir": "skills/profile-analysis"
+    }
+  ],
+  "cli": [
+    {
+      "name": "profiler-cli",
+      "required": false,
+      "why": "读取 Firefox Profiler 记录（Gecko 系项目）",
+      "minVersion": "0.10.0",
+      "install": "npm install -g @firefox-devtools/profiler-cli@latest",
+      "installArgv": ["npm", "install", "-g", "@firefox-devtools/profiler-cli@latest"],
+      "fallback": "换成你技术栈的采样器，见本技能的 references/tools.md"
+    },
+    {
+      "name": "samply",
+      "required": false,
+      "why": "抓取与查看采样记录（原生程序，也能读别人的 profile）",
+      "install": "cargo install samply",
+      "fallback": "用 perf / Instruments / VTune 等系统自带工具"
+    },
+    {
+      "name": "py-spy",
+      "required": false,
+      "why": "Python 进程采样",
+      "install": "pip install py-spy",
+      "fallback": "cProfile + snakeviz（侵入式，需要能改代码）"
+    }
+  ]
+}

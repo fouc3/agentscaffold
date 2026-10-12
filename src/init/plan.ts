@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { exists, isDirectory } from '../util/fsx.js';
-import { loadPacks, packSkillRoot, selectPacks, type LoadedPack, type PackSkill } from '../pack/pack.js';
+import { loadPacks, packSkillRoot, selectAddOnPacks, selectPacks, type LoadedPack, type PackSkill } from '../pack/pack.js';
 import { agentsMd, claudeImportPath, claudeMd, skillsReadme } from './templates.js';
 import { displayPath, relativePath, scopePaths, type Scope, type ScopePaths } from './scope.js';
 
@@ -36,6 +36,8 @@ export interface InitOptions {
   claude: boolean;
   force: boolean;
   only: string[] | undefined;
+  /** Add-on (`optional: true`) packs to install on top of the defaults. */
+  addPacks: string[] | undefined;
   skipSkills: boolean;
   toolVersion: string;
   now?: Date;
@@ -53,7 +55,10 @@ export interface InitPlan {
 
 export function buildInitPlan(options: InitOptions): InitPlan {
   const paths = scopePaths(options.scope, options.projectRoot);
-  const packs = selectPacks(loadPacks(), options.only);
+  const all = loadPacks();
+  const defaults = selectPacks(all, options.only);
+  const addOns = selectAddOnPacks(all, options.addPacks, defaults);
+  const packs = [...defaults, ...addOns];
   const skills: Array<{ pack: LoadedPack; skill: PackSkill }> = [];
   if (!options.skipSkills) {
     for (const pack of packs) {
@@ -160,7 +165,6 @@ function noticeEntries(
   skillDir: string,
   pack: LoadedPack,
 ): PlannedEntry[] {
-  if (pack.upstream === undefined) return [];
   const out: PlannedEntry[] = [];
 
   // The verbatim upstream tree travels with the skill so the notices above stay true
@@ -177,14 +181,21 @@ function noticeEntries(
     );
   }
 
-  for (const file of ['LICENSE-MPL-2.0', 'THIRD-PARTY-NOTICES.md', 'TRADEMARKS.md']) {
+  // MIT also asks for the notice to travel with copies, so every pack ships its own.
+  const notices: Array<{ file: string; thirdParty: boolean }> = [
+    { file: 'LICENSE-MPL-2.0', thirdParty: true },
+    { file: 'THIRD-PARTY-NOTICES.md', thirdParty: true },
+    { file: 'TRADEMARKS.md', thirdParty: true },
+    { file: 'LICENSE-MIT', thirdParty: false },
+  ];
+  for (const { file, thirdParty } of notices) {
     const source = join(pack.root, file);
     if (!exists(source)) continue;
     out.push(
       entry(join(skillDir, file), {
         kind: 'copy-file',
         origin: `pack:${pack.name}:notice`,
-        thirdParty: true,
+        thirdParty,
         source,
       }),
     );

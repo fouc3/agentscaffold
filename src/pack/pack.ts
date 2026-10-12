@@ -43,6 +43,11 @@ export interface PackManifest {
   version: string;
   description: string;
   license: string;
+  /**
+   * Add-on pack: not installed by default. `init` offers it in a separate step (and never
+   * pre-selects it); non-interactive runs need `--add-packs <name>`.
+   */
+  optional?: boolean;
   upstream?: PackUpstream;
   skills: PackSkill[];
   cli: PackCli[];
@@ -73,9 +78,29 @@ export function loadPacks(dir: string = packsDir()): LoadedPack[] {
   return packs.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Packs installed by default: everything not marked `optional`, narrowed by an explicit --skills. */
 export function selectPacks(all: LoadedPack[], only: string[] | undefined): LoadedPack[] {
-  if (only === undefined || only.length === 0) return all;
-  return all.filter((pack) => only.includes(pack.name));
+  if (only !== undefined && only.length > 0) return all.filter((pack) => only.includes(pack.name));
+  return all.filter((pack) => pack.optional !== true);
+}
+
+export function optionalPacks(all: LoadedPack[]): LoadedPack[] {
+  return all.filter((pack) => pack.optional === true);
+}
+
+/**
+ * Which add-on packs to install. An explicit `--add-packs` wins; otherwise the TUI's answer.
+ * Packs already selected as defaults are never returned twice.
+ */
+export function selectAddOnPacks(
+  all: LoadedPack[],
+  addPacks: string[] | undefined,
+  alreadySelected: LoadedPack[],
+): LoadedPack[] {
+  const taken = new Set(alreadySelected.map((pack) => pack.name));
+  const candidates = optionalPacks(all).filter((pack) => !taken.has(pack.name));
+  if (addPacks === undefined || addPacks.length === 0) return [];
+  return candidates.filter((pack) => addPacks.includes(pack.name));
 }
 
 export function packSkillRoot(pack: LoadedPack, skill: PackSkill): string {

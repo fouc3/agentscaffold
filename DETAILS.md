@@ -11,6 +11,7 @@
 | 安装到当前仓库 | `agentscaffold init --scope project --accept-mpl-notice` |
 | 同时装 Claude Code | `agentscaffold init --claude` |
 | 只装部分技能包 | `agentscaffold init --skills perf-regression-triage` |
+| 装附加技能包（默认不装） | `agentscaffold init --add-packs profile-analysis` |
 | 只写文档、不装技能 | `agentscaffold init --no-skills` |
 | 覆盖已有文件 | `agentscaffold init --force` |
 | 完成后提交本次改动（项目级） | `agentscaffold init --scope project --accept-mpl-notice --commit` |
@@ -77,7 +78,7 @@
 
 ```
 packs/<包名>/
-  pack.json                      # name/version/description/license
+  pack.json                      # name/version/description/license/optional
                                  #   skills[]：技能名 + 目录
                                  #   cli[]：依赖的工具
                                  #   upstream[]（可选）：来源仓库/路径/固定提交/许可/文件清单
@@ -86,6 +87,17 @@ packs/<包名>/
   upstream/                      # 可选：原样保留的上游文件 + PROVENANCE.json
   LICENSE-* / THIRD-PARTY-NOTICES.md / TRADEMARKS.md
 ```
+
+`optional: true` 的包是**附加包**：默认不装，`init` 会单独问一步（永不预选），
+非交互模式需要 `--add-packs <名字>`（`--skills <名字>` 也能显式装上）。
+附加包的文件同样进安装清单，`uninstall` 一并清理。
+
+随包提供（`agentscaffold packs` 可列）：
+
+| 包 | 默认 | 内容 |
+| --- | --- | --- |
+| `perf-regression-triage` | 装 | 性能回归从告警到修复（含 MPL-2.0 上游文件） |
+| `profile-analysis` | 不装（附加） | 读懂一份性能记录，给出可行动的结论（纯 MIT，本项目原创） |
 
 `cli[]` 每项字段：
 
@@ -149,7 +161,7 @@ scripts/smoke.mjs    端到端冒烟（用假 HOME，不碰真实用户目录）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 50 项端到端断言
+npm run smoke     # 61 项端到端断言
 ```
 
 冒烟覆盖（按主题）：
@@ -171,3 +183,7 @@ npm run smoke     # 50 项端到端断言
 - **可选工具**：只挑「缺失 + 声明了 `installArgv`」的；安装命令以 argv 传递（断言 `$HOME;rm -rf`
   这类参数不被 shell 解释）；失败时识别权限问题；随包技能包确实声明了可安装的工具；
   非交互不加 `--install-tools` 时只报告不安装。
+- **附加包**：默认不装；`--add-packs` 才装并带上自己的 `LICENSE-MIT`（MIT 包不该带 MPL 文件）；
+  清单记录追加包且卸载一并清干净；`--skills` 显式点名也能装；清单里 MPL 与 MIT 的划分不错位。
+- **交互可继续性**：`init` 里的多选步骤都设了 `required: false`——clack 默认要求「至少选一个」，
+  不放开的话「一个都不装」在 TUI 里根本提交不了（这是实测踩到的坑）。

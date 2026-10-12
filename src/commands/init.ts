@@ -12,7 +12,7 @@ import {
   writeManifest,
 } from '../init/manifest.js';
 import { maybeCommit } from './uninstall.js';
-import { loadPacks, type LoadedPack } from '../pack/pack.js';
+import { loadPacks, optionalPacks, selectPacks, type LoadedPack } from '../pack/pack.js';
 import { formatToolDetails, formatToolLine, probePacks, type ToolStatus } from '../init/cli-deps.js';
 import { installableMissing, runInstalls } from '../init/tool-install.js';
 import { createProgress } from '../ui/progress.js';
@@ -29,6 +29,8 @@ export interface InitFlags {
   dryRun: boolean;
   claude: boolean;
   skills?: string[];
+  /** Add-on packs to install on top of the defaults (non-interactive counterpart of the add-on step). */
+  addPacks?: string[];
   noSkills: boolean;
   acceptMplNotice: boolean;
   /** Non-interactive opt-in for the "commit this run?" step; the TUI asks instead. */
@@ -119,6 +121,10 @@ const OUTCOME_LABEL: Record<EntryOutcome, (text: string) => string> = {
 export async function runInit(pathArg: string | undefined, flags: InitFlags): Promise<number> {
   const projectRoot = resolve(pathArg ?? process.cwd());
   const availablePacks = loadPacks();
+  const defaultPacks = selectPacks(availablePacks, flags.skills);
+  const addOnPacks = optionalPacks(availablePacks).filter(
+    (pack) => !defaultPacks.some((selected) => selected.name === pack.name),
+  );
   const tty = interactive() && !flags.yes;
 
   let scope: Scope;
@@ -131,6 +137,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
 
   let claude = flags.claude;
   let only = flags.skills;
+  let addPacks = flags.addPacks;
   let skipSkills = flags.noSkills || availablePacks.length === 0;
   let accepted = flags.acceptMplNotice;
 
@@ -166,12 +173,15 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       accepted = true;
     }
 
-    if (availablePacks.length > 0) {
+    if (defaultPacks.length > 0) {
       const chosen = answer<string[]>(
         await clack.multiselect<string>({
           message: '安装哪些技能包？',
-          initialValues: availablePacks.map((pack) => pack.name),
-          options: availablePacks.map((pack) => ({
+          initialValues: defaultPacks.map((pack) => pack.name),
+          // clack defaults to "at least one"; without this you cannot continue by
+          // deselecting everything, which is exactly what "install nothing" means.
+          required: false,
+          options: defaultPacks.map((pack) => ({
             value: pack.name,
             label: `${pack.name} v${pack.version}`,
             hint: pack.description,
@@ -180,6 +190,23 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       );
       only = chosen;
       skipSkills = chosen.length === 0;
+    }
+
+    // Add-on packs are never pre-selected: they exist for people who want them.
+    if (addOnPacks.length > 0) {
+      const extra = answer<string[]>(
+        await clack.multiselect<string>({
+          message: '是否安装附加技能包？（默认一个都不装）',
+          initialValues: [],
+          required: false,
+          options: addOnPacks.map((pack) => ({
+            value: pack.name,
+            label: `${pack.name} v${pack.version}`,
+            hint: pack.description,
+          })),
+        }),
+      );
+      addPacks = extra;
     }
 
     claude = answer<boolean>(
@@ -206,6 +233,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
     claude,
     force: flags.force,
     only,
+    addPacks,
     skipSkills,
     toolVersion,
   });
@@ -302,6 +330,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
               hint: status.install ?? (status.installArgv ?? []).join(' '),
             })),
             initialValues: [],
+            required: false,
           }),
         );
         selected = missing.filter((status) => picked.includes(status.name));
