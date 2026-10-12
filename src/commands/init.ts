@@ -89,7 +89,7 @@ function projectScopeNotice(packs: LoadedPack[], projectRoot: string): string {
     '- 不要把 MPL 文件内容合并进你自己的源文件；合并后的文件可能受 MPL 约束。',
     '- 请勿使用 Mozilla/Firefox 名称或 logo 暗示官方背书。',
     '',
-    '详细文件清单：运行 agentscaffold --license',
+    '详细文件清单：agentscaffold --license',
     'agent / 合规扫描：agentscaffold --license --json',
   ];
   const upstream = mplPacks(packs)
@@ -192,7 +192,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
     process.stderr.write('  交互式：去掉 --yes，按提示确认\n');
     process.stderr.write('  非交互：追加 --accept-mpl-notice\n');
     process.stderr.write('  默认的用户级安装不写入任何仓库，不需要该确认\n');
-    process.stderr.write('  详细文件清单：运行 agentscaffold --license\n');
+    process.stderr.write('  详细文件清单：agentscaffold --license\n');
     process.stderr.write('  agent / 合规扫描：agentscaffold --license --json\n');
     return 2;
   }
