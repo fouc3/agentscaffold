@@ -1,7 +1,7 @@
 // End-to-end smoke test. Never touches the real HOME: user-scope runs get a fake HOME.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -821,6 +821,8 @@ const {
   canInstall,
   listInstalled,
 } = await import(new URL('../dist/init/tool-install.js', import.meta.url));
+const { probeTool: probeToolOnce, formatToolLine: formatToolLineOnce, formatToolDetails: formatToolDetailsOnce } =
+  await import(new URL('../dist/init/cli-deps.js', import.meta.url));
 const stubManager = join(root, 'scripts', 'fixtures', 'fake-manager.sh');
 const fakeTools = join(sandbox, 'tools-prefix');
 const managerLog = join(sandbox, 'manager.log');
@@ -836,13 +838,34 @@ const toolEnv = {
 };
 const fakeStatus = (over) => ({ name: 'demo', required: false, found: false, versionOk: false, usedBy: [], ...over });
 
-check('可选工具：npm 走 --prefix、cargo 走 --root，从不带 -g', () => {
+check('可选工具：npm 用 -g + 我们的 --prefix（bin 才会落在 <dir>/bin）、cargo 用 --root', () => {
   const npm = isolatedArgv({ name: 'x', manager: 'npm', package: '@scope/pkg' }, '/tmp/p').join(' ');
   const cargo = isolatedArgv({ name: 'y', manager: 'cargo', package: 'crate' }, '/tmp/p').join(' ');
-  assert.ok(npm.includes('--prefix /tmp/p'), npm);
-  assert.ok(!npm.includes(' -g'), `绝不能全局安装：${npm}`);
+  // `npm --prefix` 单独用是「本地安装」，bin 落在 node_modules/.bin，没有 PATH 会包含它；
+  // 真正的原因是前缀曾是 /usr，而不是 -g 这个开关本身（实测吃过一次亏）。
+  assert.ok(npm.includes('-g') && npm.includes('--prefix /tmp/p'), npm);
+  assert.ok(!npm.includes('/usr'), `绝不能落到系统前缀：${npm}`);
   assert.ok(cargo.includes('--root /tmp/p'), cargo);
   assert.ok(cargo.includes('--locked'), cargo);
+});
+
+check('可选工具：自用前缀里的可执行文件会被认出来（并说明未加进 PATH）', () => {
+  const previous = process.env.AGENTSCAFFOLD_TOOLS_DIR;
+  process.env.AGENTSCAFFOLD_TOOLS_DIR = fakeTools;
+  mkdirSync(join(fakeTools, 'bin'), { recursive: true });
+  const fake = join(fakeTools, 'bin', 'probe-me');
+  writeFileSync(fake, '#!/bin/sh\necho "probe 9.9.9"\n');
+  chmodSync(fake, 0o755);
+  const probed = probeToolOnce('probe-me');
+  const status = { name: 'probe-me', ...probed, required: false, versionOk: true, usedBy: [] };
+  const line = formatToolLineOnce(status);
+  const details = formatToolDetailsOnce(status).join('\n');
+  if (previous === undefined) delete process.env.AGENTSCAFFOLD_TOOLS_DIR;
+  else process.env.AGENTSCAFFOLD_TOOLS_DIR = previous;
+  assert.equal(probed.found, true, '放在自用前缀里就该被认出来');
+  assert.equal(probed.source, 'agentscaffold-tools', JSON.stringify(probed));
+  assert.ok(line.includes('自用前缀'), line);
+  assert.ok(details.includes('PATH'), details);
 });
 
 check('可选工具：只挑声明了 installWith 的；裸 argv 只算建议、不执行', () => {
@@ -883,9 +906,9 @@ check('可选工具：装进自用前缀并留下可撤销的记录（端到端�
   assert.ok(output.includes('已安装'), output);
   assert.ok(output.includes(fakeTools), `必须说明装到自用前缀：\n${output}`);
   const log = readFileSync(managerLog, 'utf8');
-  // 权威证据：真正执行的命令里绝不能出现 -g（报告里给人看的建议文案不算）。
+  // 权威证据：命令里必须带我们的前缀（-g 是 npm 把 bin 放到 <dir>/bin 的必要条件，前缀才是关键）。
   assert.ok(log.includes(`--prefix ${fakeTools}`), log);
-  assert.ok(!/\s-g\s/.test(log), `执行的命令里不该有 -g：\n${log}`);
+  assert.ok(!log.includes('/usr'), `执行的命令里不该出现系统前缀：\n${log}`);
   const records = listInstalled(fakeTools);
   assert.ok(records.length >= 1, JSON.stringify(records));
   assert.ok(

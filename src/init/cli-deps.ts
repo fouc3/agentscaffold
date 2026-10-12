@@ -1,8 +1,11 @@
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { getGlyphs } from '../ui/glyphs.js';
 import { dim, green, red, yellow } from '../ui/color.js';
+import { exists } from '../util/fsx.js';
 import type { LoadedPack, PackCli } from '../pack/pack.js';
 import { CODEGRAPH_INSTALL, CODEGRAPH_INSTALL_WITH } from '../search/code.js';
+import { toolsBinDir } from './tools-prefix.js';
 
 export interface ToolStatus {
   name: string;
@@ -11,6 +14,8 @@ export interface ToolStatus {
   version?: string;
   minVersion?: string;
   versionOk: boolean;
+  /** Where it was found: on PATH, or only in our private prefix (not usable everywhere yet). */
+  source?: 'PATH' | 'agentscaffold-tools';
   why?: string;
   install?: string;
   installArgv?: string[];
@@ -19,10 +24,28 @@ export interface ToolStatus {
   usedBy: string[];
 }
 
-/** `--version` first, falling back to `-v`; ENOENT means "not installed". */
-export function probeTool(name: string): { found: boolean; version?: string } {
+/**
+ * `--version` first, falling back to `-v`; ENOENT means "not installed".
+ *
+ * Also looks in our private prefix (`~/.agents/tools/bin`). Without that, a tool we just installed
+ * there is reported as missing on the very next probe — the contradiction the user hit. The
+ * returned `source` lets the report say *where* it was found, so "found but not on PATH" is visible
+ * instead of silently pretending it is usable everywhere.
+ */
+export function probeTool(name: string): { found: boolean; version?: string; source?: 'PATH' | 'agentscaffold-tools' } {
+  const inPath = probeBinary(name);
+  if (inPath.found) return { ...inPath, source: 'PATH' };
+  const local = join(toolsBinDir(), name);
+  if (exists(local)) {
+    const probed = probeBinary(local);
+    if (probed.found) return { ...probed, source: 'agentscaffold-tools' };
+  }
+  return { found: false };
+}
+
+function probeBinary(nameOrPath: string): { found: boolean; version?: string } {
   for (const flag of ['--version', '-v']) {
-    const result = spawnSync(name, [flag], { encoding: 'utf8', timeout: 5000 });
+    const result = spawnSync(nameOrPath, [flag], { encoding: 'utf8', timeout: 5000 });
     if (result.error !== undefined && result.error !== null) {
       const code = (result.error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') return { found: false };
@@ -100,6 +123,7 @@ export function probePacks(packs: LoadedPack[]): ToolStatus[] {
       version: probed.version,
       minVersion: cli.minVersion,
       versionOk: probed.found && meetsMinimum(probed.version, cli.minVersion),
+      source: probed.source,
       why: cli.why,
       install: cli.install,
       installArgv: cli.installArgv,
@@ -121,12 +145,19 @@ export function formatToolLine(status: ToolStatus): string {
   if (!status.versionOk) {
     return `${glyphs.warn} ${label} — ${yellow(`older than ${status.minVersion ?? 'required'}`)}${version}`;
   }
-  return `${glyphs.ok} ${label}${version}`;
+  const scope = status.source === 'agentscaffold-tools' ? ` ${dim('（在自用前缀，未加进 PATH）')}` : '';
+  return `${glyphs.ok} ${label}${version}${scope}`;
 }
 
 export function formatToolDetails(status: ToolStatus): string[] {
   const lines: string[] = [];
   if (status.why !== undefined) lines.push(`   ${dim('why')}      ${status.why}`);
+  if (status.source === 'agentscaffold-tools') {
+    lines.push(
+      `   ${dim('location')} ${join(toolsBinDir(), status.name)}`,
+      `   ${dim('note')}     加进 PATH 才能在别处直接用：export PATH="${toolsBinDir()}:$PATH"`,
+    );
+  }
   if (!status.found || !status.versionOk) {
     if (status.install !== undefined) lines.push(`   ${dim('install')}  ${status.install}`);
     if (status.fallback !== undefined) lines.push(`   ${dim('fallback')} ${status.fallback}`);

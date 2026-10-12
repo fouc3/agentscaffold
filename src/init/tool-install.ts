@@ -18,6 +18,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { toolsBinDir, toolsDir } from './tools-prefix.js';
 import type { ToolStatus } from './cli-deps.js';
 
 export type Manager = 'npm' | 'cargo';
@@ -48,16 +49,7 @@ export interface InstalledRecord {
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const RECORD_FILE = 'installed.json';
 
-/** Our private prefix. Overridable so tests never touch the real one. */
-export function toolsDir(): string {
-  const override = process.env.AGENTSCAFFOLD_TOOLS_DIR;
-  if (override !== undefined && override.length > 0) return override;
-  return join(process.env.HOME ?? process.cwd(), '.agents', 'tools');
-}
-
-export function toolsBinDir(): string {
-  return join(toolsDir(), 'bin');
-}
+export { toolsDir, toolsBinDir } from './tools-prefix.js';
 
 function managerBinary(manager: Manager): string {
   const override = manager === 'npm' ? process.env.AGENTSCAFFOLD_NPM : process.env.AGENTSCAFFOLD_CARGO;
@@ -88,14 +80,18 @@ export function advisoryOnly(statuses: ToolStatus[]): ToolStatus[] {
 /** Build the isolated argv ourselves — never take an argv array from pack data. */
 export function isolatedArgv(target: InstallTarget, dir: string = toolsDir()): string[] {
   if (target.manager === 'npm') {
+    // `-g` together with **our own** prefix: that combination is what puts the executable in
+    // `<dir>/bin` (a plain `--prefix` install is a *local* install and lands in
+    // `<dir>/node_modules/.bin`, which no PATH will ever contain). The dangerous part was never
+    // the flag, it was the `/usr` prefix.
     return [
       managerBinary('npm'),
       'install',
+      '-g',
       '--prefix',
       dir,
       '--no-fund',
       '--no-audit',
-      '--no-package-lock',
       '--loglevel',
       'error',
       target.package,
@@ -263,7 +259,7 @@ export async function removeTool(name: string, dir: string = toolsDir()): Promis
 
   const argv =
     record.manager === 'npm'
-      ? [managerBinary('npm'), 'uninstall', '--prefix', dir, '--no-fund', '--no-audit', record.package]
+      ? [managerBinary('npm'), 'uninstall', '-g', '--prefix', dir, '--no-fund', '--no-audit', record.package]
       : [managerBinary('cargo'), 'uninstall', '--root', dir, record.package];
   const result = await runArgv(argv, 120_000);
   let ok = result.ok;
