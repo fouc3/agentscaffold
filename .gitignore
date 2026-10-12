@@ -1,0 +1,8 @@
+# 构建产物与依赖不入库（dist 由 npm run build 生成，packs 必须入库）
+node_modules/
+dist/
+
+# 本地运行残留
+*.log
+artifacts/
+.DS_Store

@@ -1,0 +1,164 @@
+// End-to-end smoke test. Never touches the real HOME: user-scope runs get a fake HOME.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const cli = join(root, 'dist', 'bin', 'agentscaffold.js');
+const sandbox = mkdtempSync(join(tmpdir(), 'agentscaffold-smoke-'));
+const fakeHome = join(sandbox, 'home');
+
+const checks = [];
+function check(name, fn) {
+  try {
+    fn();
+    checks.push([true, name]);
+  } catch (error) {
+    checks.push([false, `${name}\n      ${error.message}`]);
+  }
+}
+
+function run(args, options = {}) {
+  return execFileSync(process.execPath, [cli, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fakeHome, AGENTSCAFFOLD_NO_TUI: '1', NO_COLOR: '1' },
+    ...options,
+  });
+}
+
+function runExpectFail(args) {
+  try {
+    execFileSync(process.execPath, [cli, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: fakeHome, AGENTSCAFFOLD_NO_TUI: '1', NO_COLOR: '1' },
+    });
+    return { code: 0, output: '' };
+  } catch (error) {
+    return { code: error.status, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  }
+}
+
+// ── 1. project scope, non-interactive, explicit notice acceptance ────────────
+const project = join(sandbox, 'proj');
+run(['init', project, '--yes', '--scope', 'project', '--accept-mpl-notice']);
+
+const skillDir = join(project, '.agents', 'skills', 'perf-regression-triage');
+check('project: AGENTS.md 写入', () => assert.ok(existsSync(join(project, 'AGENTS.md'))));
+check('project: SKILL.md 写入', () => assert.ok(existsSync(join(skillDir, 'SKILL.md'))));
+check('project: 通知随技能目录', () => {
+  assert.ok(existsSync(join(skillDir, 'THIRD-PARTY-NOTICES.md')));
+  assert.ok(existsSync(join(skillDir, 'LICENSE-MPL-2.0')));
+  assert.ok(existsSync(join(skillDir, 'TRADEMARKS.md')));
+});
+check('project: 上游原文保留', () => assert.ok(existsSync(join(skillDir, 'upstream', 'SKILL.md'))));
+check('project: 默认不写 .claude', () => assert.ok(!existsSync(join(project, '.claude'))));
+check('project: 不把 MPL 内容合并进 AGENTS.md', () => {
+  const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  assert.ok(!agents.includes('MPL-2.0'), 'AGENTS.md 不应包含 MPL 正文/标记');
+});
+
+// ── 2. project scope without acceptance must be refused ─────────────────────
+const refused = runExpectFail(['init', join(sandbox, 'proj2'), '--yes', '--scope', 'project']);
+check('项目级未确认声明 → 拒绝 (exit 2)', () => {
+  assert.equal(refused.code, 2);
+  assert.ok(refused.output.includes('--accept-mpl-notice'));
+  assert.ok(!existsSync(join(sandbox, 'proj2', '.agents')), '拒绝后不应写入任何文件');
+});
+
+// ── 3. --claude opt-in ──────────────────────────────────────────────────────
+run(['init', project, '--yes', '--scope', 'project', '--accept-mpl-notice', '--claude']);
+check('--claude: CLAUDE.md 写 @AGENTS.md', () => {
+  const body = readFileSync(join(project, 'CLAUDE.md'), 'utf8');
+  assert.ok(body.includes('@AGENTS.md'));
+});
+check('--claude: .claude/skills 就位', () => {
+  assert.ok(existsSync(join(project, '.claude', 'skills', 'perf-regression-triage', 'SKILL.md')));
+});
+
+// ── 4. idempotency: second run must not rewrite ─────────────────────────────
+const second = run(['init', project, '--yes', '--scope', 'project', '--accept-mpl-notice']);
+check('二次运行幂等（无 created）', () => assert.ok(!second.includes('[created]'), second));
+check('二次运行无 skipped（内容一致）', () => assert.ok(second.includes('[unchanged]'), second));
+
+// ── 5. --dry-run writes nothing ─────────────────────────────────────────────
+const dry = join(sandbox, 'dry');
+const dryOut = run(['init', dry, '--yes', '--scope', 'project', '--accept-mpl-notice', '--dry-run']);
+check('--dry-run 不落盘', () => {
+  assert.ok(!existsSync(join(dry, 'AGENTS.md')));
+  assert.ok(!existsSync(join(dry, '.agents')));
+  assert.ok(dryOut.includes('[created]'), '应报告将要创建的条目');
+});
+
+// ── 6. user scope goes to $HOME and stays out of any repo ───────────────────
+run(['init', '--yes']);
+check('user scope: ~/.agents/skills 写入', () => {
+  assert.ok(existsSync(join(fakeHome, '.agents', 'skills', 'perf-regression-triage', 'SKILL.md')));
+  assert.ok(existsSync(join(fakeHome, '.agents', 'AGENTS.md')));
+});
+check('user scope: 不写 ~/.claude', () => assert.ok(!existsSync(join(fakeHome, '.claude'))));
+check('user scope: 不在 HOME 根丢 AGENTS.md', () => assert.ok(!existsSync(join(fakeHome, 'AGENTS.md'))));
+
+// ── 7. licence surfaces ─────────────────────────────────────────────────────
+const help = run(['--help']);
+check('--help 只有一行级许可提示', () => {
+  assert.ok(help.includes('License:'));
+  assert.ok(!help.includes('MPL-2.0 要点'), '--help 不应包含完整文案');
+});
+const human = run(['--license']);
+check('--license 完整文案', () => {
+  assert.ok(human.includes('MPL-2.0 要点'));
+  assert.ok(human.includes('不得用 Mozilla/Firefox 名称或 logo'));
+  assert.ok(human.includes('本说明不是法律意见。'));
+});
+const json = JSON.parse(run(['--license', '--json']));
+check('--license --json 结构正确', () => {
+  assert.equal(json.tool, 'agentscaffold');
+  assert.equal(json.tool_license, 'MIT');
+  assert.equal(json.project_license_impact, 'none');
+  assert.ok(Array.isArray(json.mpl_files) && json.mpl_files.length > 0);
+  assert.ok(json.mpl_files.some((file) => file.endsWith('upstream/SKILL.md')));
+  assert.ok(!json.mpl_files.some((file) => file.includes('adapters.md')), '原创文件不应计入 mpl_files');
+  assert.ok(!json.mpl_files.some((file) => file.includes('PROVENANCE.json')), '我们写的溯源元数据不应计入 mpl_files');
+  assert.ok(!json.third_party_notices.startsWith('/'), 'third_party_notices 应为可移植路径/URL，不是本机绝对路径');
+  assert.equal(json.mpl_url, 'https://www.mozilla.org/MPL/2.0/');
+  assert.ok(typeof json.third_party_notices === 'string' && json.third_party_notices.length > 0);
+});
+
+// ── 9. CLAUDE.md 的 @ 导入必须解析到真实存在的 AGENTS.md ──────────────────────
+function resolveImport(claudePath) {
+  const body = readFileSync(claudePath, 'utf8');
+  const line = body.split('\n').find((candidate) => candidate.trim().startsWith('@'));
+  assert.ok(line, `${claudePath} 里没有 @ 导入行`);
+  const target = join(dirname(claudePath), line.trim().slice(1));
+  assert.ok(existsSync(target), `${claudePath} 的导入 ${line.trim()} 解析到不存在的 ${target}`);
+  return target;
+}
+check('project: CLAUDE.md 导入解析到真实 AGENTS.md', () => {
+  assert.equal(resolveImport(join(project, 'CLAUDE.md')), join(project, 'AGENTS.md'));
+});
+
+run(['init', '--yes', '--claude']);
+check('user+--claude: 导入解析到 ~/.agents/AGENTS.md', () => {
+  assert.equal(resolveImport(join(fakeHome, '.claude', 'CLAUDE.md')), join(fakeHome, '.agents', 'AGENTS.md'));
+});
+check('user+--claude: 不生成 .dsh', () => assert.ok(!existsSync(join(fakeHome, '.dsh'))));
+
+// ── 10. --skills filter and doctor ──────────────────────────────────────────
+const filtered = join(sandbox, 'filtered');
+run(['init', filtered, '--yes', '--scope', 'project', '--accept-mpl-notice', '--skills', 'nope']);
+check('--skills 过滤：未选中的包不安装', () => assert.ok(!existsSync(join(filtered, '.agents', 'skills', 'perf-regression-triage'))));
+check('--skills 过滤：文档仍然写入', () => assert.ok(existsSync(join(filtered, 'AGENTS.md'))));
+check('doctor 可运行', () => assert.ok(run(['doctor', project]).includes('agentscaffold doctor')));
+
+// ── report ──────────────────────────────────────────────────────────────────
+let failed = 0;
+for (const [ok, name] of checks) {
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ✓' : '  ✗'} ${name}`);
+}
+console.log(`\n${checks.length - failed}/${checks.length} 通过`);
+rmSync(sandbox, { recursive: true, force: true });
+process.exitCode = failed === 0 ? 0 : 1;

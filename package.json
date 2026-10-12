@@ -1,0 +1,43 @@
+{
+  "name": "agentscaffold",
+  "version": "0.1.0",
+  "description": "Bootstrap a project with agent skills, a root dev-requirements doc and the CLIs those skills need.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fouc3/agentscaffold.git"
+  },
+  "homepage": "https://github.com/fouc3/agentscaffold#readme",
+  "bugs": {
+    "url": "https://github.com/fouc3/agentscaffold/issues"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "agentscaffold": "dist/bin/agentscaffold.js"
+  },
+  "files": [
+    "dist",
+    "packs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/postbuild.mjs",
+    "dev": "tsc --watch",
+    "cli": "npm run build && node dist/bin/agentscaffold.js",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "commander": "^14.0.2",
+    "sisteransi": "^1.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}

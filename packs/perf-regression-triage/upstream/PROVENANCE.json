@@ -1,0 +1,17 @@
+{
+  "repo": "mozilla-firefox/firefox",
+  "path": ".claude/skills/perf-regression-triage",
+  "commit": "8e9ac3e12bbaf39d4c282dc8849221aa17d4f714",
+  "fetchedVia": "gh api -H 'Accept: application/vnd.github.raw' repos/<repo>/contents/<path>",
+  "fetchedAt": "2026-10-12",
+  "license": "MPL-2.0",
+  "blobSha256GitOid": {
+    "SKILL.md": "4e9c2a8ab72ccac753dff52b07f7428eaae6e0ae",
+    "references/close-out.md": "210f9eed55b22f2eff9434ab38bd29c9898dc942",
+    "references/confirm.md": "46d38da055c7796ccfa55c7801ebca95fb9d9b24",
+    "references/iterate.md": "297988f6a314528913485d93b3aca46567cd1550",
+    "references/rest-api.md": "231b070afbb20f6ac87d375e432f1af9f33c44f1",
+    "tests/trigger-tests.sh": "dc881fe57928e7312f488ab701d1de7bdb1a4c39"
+  },
+  "note": "本目录下的文件按原样保留，未做任何修改；MPL-2.0 全文见 ../../LICENSE-MPL-2.0。"
+}

@@ -1,0 +1,64 @@
+{
+  "name": "perf-regression-triage",
+  "version": "0.1.0",
+  "description": "性能回归：从告警单到修复的端到端流程，数据源按项目适配器声明",
+  "license": "MPL-2.0",
+  "upstream": {
+    "repo": "mozilla-firefox/firefox",
+    "path": ".claude/skills/perf-regression-triage",
+    "commit": "8e9ac3e12bbaf39d4c282dc8849221aa17d4f714",
+    "license": "MPL-2.0",
+    "files": [
+      "SKILL.md",
+      "references/close-out.md",
+      "references/confirm.md",
+      "references/iterate.md",
+      "references/rest-api.md",
+      "tests/trigger-tests.sh"
+    ],
+    "modifications": "改写为通用适配器形态：告警源、revision 来源、profile 工具、CI 触发方式一律由项目配置声明；保留五步流程、证据优先与成本纪律。上游原文按 MPL-2.0 原样保留在 upstream/。"
+  },
+  "skills": [
+    {
+      "name": "perf-regression-triage",
+      "dir": "skills/perf-regression-triage"
+    }
+  ],
+  "cli": [
+    {
+      "name": "git",
+      "required": true,
+      "why": "定位 culprit commit、比对 base/new revision",
+      "fallback": "无：没有版本控制无法归因"
+    },
+    {
+      "name": "curl",
+      "required": false,
+      "why": "直连告警源 REST API —— 没有专用 CLI 时的完整回退路径",
+      "install": "用系统包管理器安装 curl（pacman -S curl / apt install curl）",
+      "fallback": "改用告警源自带的 CLI"
+    },
+    {
+      "name": "gh",
+      "required": false,
+      "why": "读取与更新 GitHub Issues / PR，做回归单流转",
+      "install": "https://cli.github.com/",
+      "fallback": "在网页端人工流转"
+    },
+    {
+      "name": "profiler-cli",
+      "required": false,
+      "why": "读取 Firefox Profiler 的 profile（Gecko 系项目）",
+      "minVersion": "0.10.0",
+      "install": "npm install -g @firefox-devtools/profiler-cli@latest",
+      "fallback": "换成你技术栈的采样器（samply / perf / py-spy / node --cpu-prof），按 references/adapters.md 的同一流程分析"
+    },
+    {
+      "name": "treeherder-cli",
+      "required": false,
+      "why": "Mozilla 系 CI 的作业与性能数据（仅适配器之一）",
+      "install": "cargo install treeherder-cli",
+      "fallback": "用 curl 直连告警源 REST API，见 references/adapters.md"
+    }
+  ]
+}
