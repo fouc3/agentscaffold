@@ -1,7 +1,7 @@
 // End-to-end smoke test. Never touches the real HOME: user-scope runs get a fake HOME.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -224,6 +224,159 @@ check('折行：保留词间空格且不在行尾留空格', () => {
   assert.ok(lines.every((line) => displayWidth(line) <= 11), lines.join('|'));
   assert.equal(lines.join(' '), 'alpha beta gamma delta');
   assert.ok(!lines.some((line) => line !== line.trimEnd()), '行尾不应有空格');
+});
+
+// ── 13. 安装清单与一键卸载 ──────────────────────────────────────────────────
+const gitEnv = {
+  ...process.env,
+  HOME: fakeHome,
+  AGENTSCAFFOLD_NO_TUI: '1',
+  NO_COLOR: '1',
+  GIT_AUTHOR_NAME: 'smoke',
+  GIT_AUTHOR_EMAIL: 'smoke@example.com',
+  GIT_COMMITTER_NAME: 'smoke',
+  GIT_COMMITTER_EMAIL: 'smoke@example.com',
+};
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });
+}
+/** Tolerant variant: returns '' instead of throwing when git exits non-zero. */
+function gitTry(args, cwd) {
+  try {
+    return git(args, cwd);
+  } catch {
+    return '';
+  }
+}
+function runIn(args, cwd) {
+  return execFileSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8', env: gitEnv });
+}
+function failIn(args, cwd) {
+  try {
+    execFileSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8', env: gitEnv });
+    return { code: 0, output: '' };
+  } catch (error) {
+    return { code: error.status, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  }
+}
+const manifestOf = (root) => JSON.parse(readFileSync(join(root, '.agents', 'agentscaffold.manifest.json'), 'utf8'));
+
+// Isolation: earlier sections installed into the fake HOME, and scope detection would then find
+// two installs. Start this section with a clean user scope.
+rmSync(join(fakeHome, '.agents'), { recursive: true, force: true });
+
+const repoA = join(sandbox, 'unin-a');
+mkdirSync(repoA, { recursive: true });
+writeFileSync(join(repoA, 'keep.txt'), 'mine\n');
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repoA);
+
+check('清单：init 写出安装清单（schema/scope/哈希）', () => {
+  const manifest = manifestOf(repoA);
+  assert.equal(manifest.schema, 'agentscaffold/manifest@1');
+  assert.equal(manifest.scope, 'project');
+  assert.ok(manifest.entries.length >= 16, `条目 ${manifest.entries.length}`);
+  assert.ok(manifest.entries.every((entry) => /^[0-9a-f]{64}$/.test(entry.sha256)));
+  assert.ok(!manifest.entries.some((entry) => entry.path === 'keep.txt'), '不应把用户既有文件记入清单');
+});
+
+runIn(['uninstall', '.', '--yes', '--scope', 'project'], repoA);
+check('卸载：清单内文件删净、清单自身删除、空目录清理', () => {
+  assert.ok(!existsSync(join(repoA, 'AGENTS.md')));
+  assert.ok(!existsSync(join(repoA, '.agents', 'skills')));
+  assert.ok(!existsSync(join(repoA, '.agents', 'agentscaffold.manifest.json')));
+  assert.ok(!existsSync(join(repoA, '.agents')), '空目录 .agents 应被清理');
+});
+check('卸载：非清单文件与用户既有文件保留', () => assert.ok(existsSync(join(repoA, 'keep.txt'))));
+
+const repoB = join(sandbox, 'unin-b');
+mkdirSync(repoB, { recursive: true });
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repoB);
+const editedFile = join(repoB, '.agents', 'skills', 'perf-regression-triage', 'SKILL.md');
+writeFileSync(editedFile, `${readFileSync(editedFile, 'utf8')}\n我改过\n`);
+const firstUninstall = runIn(['uninstall', '.', '--yes', '--scope', 'project'], repoB);
+check('卸载：安装后被修改的文件默认保留，并保留清单以便后续处理', () => {
+  assert.ok(existsSync(editedFile), '被改过的文件不应被删');
+  assert.ok(firstUninstall.includes('kept: 安装后被修改'));
+  const manifest = manifestOf(repoB);
+  assert.deepEqual(
+    manifest.entries.map((entry) => entry.path),
+    ['.agents/skills/perf-regression-triage/SKILL.md'],
+  );
+});
+runIn(['uninstall', '.', '--yes', '--force', '--scope', 'project'], repoB);
+check('卸载 --force：连改过的文件一并删除并清理干净', () => {
+  assert.ok(!existsSync(editedFile));
+  assert.ok(!existsSync(join(repoB, '.agents')));
+});
+
+const emptyRepo = join(sandbox, 'unin-empty');
+mkdirSync(emptyRepo, { recursive: true });
+check('卸载：没有安装清单时报错退出 2 且不删任何东西', () => {
+  writeFileSync(join(emptyRepo, 'x.txt'), 'x');
+  const result = failIn(['uninstall', '.', '--yes'], emptyRepo);
+  assert.equal(result.code, 2);
+  assert.ok(result.output.includes('未发现由 agentscaffold 安装的内容'));
+  assert.ok(existsSync(join(emptyRepo, 'x.txt')));
+});
+
+const dualRepo = join(sandbox, 'unin-dual');
+mkdirSync(dualRepo, { recursive: true });
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], dualRepo);
+runIn(['init', '--yes'], dualRepo); // 用户级装进假 HOME
+check('卸载：两个作用域都在 + 非交互未指定 --scope → 报错并列出可选', () => {
+  const result = failIn(['uninstall', '.', '--yes'], dualRepo);
+  assert.equal(result.code, 2);
+  assert.ok(result.output.includes('发现多个安装'), result.output);
+});
+check('卸载 --scope user：只动用户级', () => {
+  runIn(['uninstall', '.', '--yes', '--scope', 'user'], dualRepo);
+  assert.ok(!existsSync(join(fakeHome, '.agents', 'skills')));
+  assert.ok(existsSync(join(dualRepo, '.agents', 'skills')), '项目级不应被波及');
+});
+
+const dryRepo = join(sandbox, 'unin-dry');
+mkdirSync(dryRepo, { recursive: true });
+runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], dryRepo);
+check('卸载 --dry-run：报告但不落盘', () => {
+  const output = runIn(['uninstall', '.', '--yes', '--dry-run', '--scope', 'project'], dryRepo);
+  assert.ok(output.includes('[removed]'), output);
+  assert.ok(existsSync(join(dryRepo, 'AGENTS.md')));
+  assert.ok(existsSync(join(dryRepo, '.agents', 'agentscaffold.manifest.json')));
+});
+
+// ── 14. 代提交（只提交本次路径，不 push）────────────────────────────────────
+const commitRepo = join(sandbox, 'commit-a');
+mkdirSync(commitRepo, { recursive: true });
+git(['init', '-q', '-b', 'main'], commitRepo);
+writeFileSync(join(commitRepo, 'unrelated.txt'), 'staged on purpose\n');
+writeFileSync(join(commitRepo, 'other.txt'), 'not ours\n');
+git(['add', 'unrelated.txt'], commitRepo); // 故意先暂存一个无关文件
+
+check('代提交：init --commit 生成一个提交，且只含本次路径', () => {
+  runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--commit'], commitRepo);
+  const subject = git(['log', '-1', '--pretty=%s'], commitRepo).trim();
+  assert.ok(subject.startsWith('chore:'), subject);
+  const files = git(['show', '--name-only', '--pretty=format:', 'HEAD'], commitRepo).trim().split('\n');
+  assert.ok(files.includes('AGENTS.md'), 'AGENTS.md 应在提交里');
+  assert.ok(files.includes('.agents/agentscaffold.manifest.json'), '清单应在提交里');
+  assert.ok(!files.includes('unrelated.txt'), '无关文件不应被提交');
+  assert.ok(!files.includes('other.txt'), '无关文件不应被提交');
+});
+check('代提交：不 push（没有远程、分支不领先 origin）', () => {
+  assert.equal(git(['remote'], commitRepo).trim(), '');
+  assert.ok(git(['status', '--porcelain', '--', 'unrelated.txt'], commitRepo).trim() !== '', '无关文件应仍留在暂存区');
+});
+check('代提交：非交互不加 --commit 就不提交', () => {
+  const repo = join(sandbox, 'commit-b');
+  mkdirSync(repo, { recursive: true });
+  git(['init', '-q', '-b', 'main'], repo);
+  const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
+  assert.ok(output.includes('未加 --commit，跳过提交'), output);
+  assert.equal(gitTry(['rev-parse', '--verify', '--quiet', 'HEAD'], repo).trim(), '', '不应产生提交');
+});
+check('代提交：用户级 init 不触发提交步骤', () => {
+  const output = runIn(['init', '--yes'], sandbox);
+  assert.ok(!output.includes('已提交'), output);
 });
 
 // ── report ──────────────────────────────────────────────────────────────────

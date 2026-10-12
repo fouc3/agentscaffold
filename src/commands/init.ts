@@ -1,7 +1,17 @@
 import { resolve } from 'node:path';
 import { applyPlan } from '../init/apply.js';
 import { allEntries, buildInitPlan, type EntryOutcome, type InitPlan } from '../init/plan.js';
-import { scopePaths, type Scope } from '../init/scope.js';
+import { scopePaths, displayPath, type Scope } from '../init/scope.js';
+import {
+  MANIFEST_RELATIVE_PATH,
+  MANIFEST_SCHEMA,
+  collectInstalledFiles,
+  manifestPath,
+  mergeEntries,
+  readManifest,
+  writeManifest,
+} from '../init/manifest.js';
+import { maybeCommit } from './uninstall.js';
 import { loadPacks, type LoadedPack } from '../pack/pack.js';
 import { formatToolDetails, formatToolLine, probePacks } from '../init/cli-deps.js';
 import { createProgress } from '../ui/progress.js';
@@ -20,6 +30,8 @@ export interface InitFlags {
   skills?: string[];
   noSkills: boolean;
   acceptMplNotice: boolean;
+  /** Non-interactive opt-in for the "commit this run?" step; the TUI asks instead. */
+  commit: boolean;
 }
 
 function parseScope(value: string | undefined): Scope {
@@ -237,6 +249,28 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
   if (result.records.some((record) => record.outcome === 'skipped' || record.outcome === 'skipped-tree')) {
     report.push(`  ${glyphs.info} ${dim('已有文件被保留；用 --force 覆盖')}`);
   }
+
+  // The manifest is what makes `uninstall` able to remove exactly these files later.
+  const installed = collectInstalledFiles(plan);
+  const target = manifestPath(scope, projectRoot);
+  if (!flags.dryRun) {
+    const previous = readManifest(target);
+    writeManifest(target, {
+      schema: MANIFEST_SCHEMA,
+      tool: 'agentscaffold',
+      version: toolVersion,
+      scope,
+      projectRoot,
+      installedAt: previous?.installedAt ?? new Date().toISOString(),
+      claude: claude || previous?.claude === true,
+      packs: plan.packs.map((pack) => pack.name),
+      skills: plan.skills.map((item) => item.skill.name),
+      entries: mergeEntries(previous?.entries, installed),
+    });
+  }
+  report.push(
+    `  ${glyphs.info} ${displayPath(target, scope, projectRoot)} ${dim(`[清单：${installed.length} 个文件]`)}`,
+  );
   process.stdout.write(`${report.join('\n')}\n`);
 
   const tools = probePacks(plan.packs);
@@ -265,6 +299,22 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
           '项目其他代码不受 MPL 影响。提交前请确认团队合规。',
         ];
   process.stdout.write(`${done.join('\n')}\n`);
+
+  // Convenience step, project scope only: commit exactly what this run changed. Never pushes.
+  if (scope === 'project' && !flags.dryRun) {
+    const commitPaths = [...new Set([...installed.map((item) => item.path), MANIFEST_RELATIVE_PATH])];
+    const outcome = await maybeCommit(
+      {
+        projectRoot,
+        paths: commitPaths,
+        summary: `初始化 agent 技能与开发要求文档（agentscaffold v${toolVersion}）`,
+      },
+      { tty, commit: flags.commit },
+    );
+    if (outcome.committed) process.stdout.write(`${green('已提交')} ${outcome.hash ?? ''}\n`);
+    else if (outcome.error !== undefined) process.stdout.write(`${yellow('未提交')}：${outcome.error}\n`);
+    else if (outcome.skipped !== undefined && !tty) process.stdout.write(`${dim(outcome.skipped)}\n`);
+  }
 
   if (tty) {
     clack.outro(

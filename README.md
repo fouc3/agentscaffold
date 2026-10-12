@@ -45,6 +45,12 @@ agentscaffold init --scope project --accept-mpl-notice
 | 只装部分技能包 | `agentscaffold init --skills perf-regression-triage` |
 | 只写文档、不装技能 | `agentscaffold init --no-skills` |
 | 覆盖已有文件 | `agentscaffold init --force` |
+| 完成后提交本次改动（项目级） | `agentscaffold init --scope project --accept-mpl-notice --commit` |
+| 卸载（自动探测作用域） | `agentscaffold uninstall` |
+| 只卸载某一作用域 | `agentscaffold uninstall --scope user\|project` |
+| 预览卸载 | `agentscaffold uninstall --dry-run` |
+| 连改过的文件一起删 | `agentscaffold uninstall --force` |
+| 卸载后提交本次改动 | `agentscaffold uninstall --commit` |
 | 检查安装状态与 CLI | `agentscaffold doctor [path] [--scope user\|project] [--json]` |
 | 列出随包技能包 | `agentscaffold packs` |
 | 完整许可与 MPL 文件清单 | `agentscaffold --license` |
@@ -59,6 +65,40 @@ agentscaffold init --scope project --accept-mpl-notice
 
 不生成 `.dsh/skills/`：DSH 自己就会读 `<root>/.agents/skills/` 与 `~/.agents/skills/`，
 再写一份 `.dsh` 只会让同一份技能被维护两次。
+
+## 卸载
+
+`init` 会在作用域根写一份**安装清单**：
+
+| 作用域 | 清单位置 |
+| --- | --- |
+| user | `~/.agents/agentscaffold.manifest.json` |
+| project | `<root>/.agents/agentscaffold.manifest.json` |
+
+清单逐文件记录相对路径、内容 sha256 与来源。卸载就是照单删除：
+
+```bash
+agentscaffold uninstall                 # 自动探测：有哪个作用域就列出哪个（只有一个也照样给选项）
+agentscaffold uninstall --scope user    # 指定作用域
+agentscaffold uninstall --dry-run       # 只报告要删什么
+```
+
+规则：
+
+- **没有清单就不猜**：两个作用域都没有清单时报错退出（exit 2），不做任何删除。
+- **默认只删"还是我们装的那份"**：安装后被你改过的文件会被保留并列出，
+  同时清单只保留这些条目，方便你之后再决定；`--force` 才会连同修改一起删除。
+- 删除后清理被清空的目录（例如整个 `.agents/`），但不会删除非空目录，也不会碰清单外的文件。
+- 非交互模式下同时存在两个作用域时必须用 `--scope` 指定。
+
+## 代提交
+
+项目级 `init` 与 `uninstall` 完成后，会多问一步"要把本次改动提交到当前仓库吗？"：
+
+- 只 `git add` **本次涉及的路径**，并用 `git commit -- <路径>` 只提交这些路径——你已暂存的无关改动会原样留在暂存区。
+- **绝不 push**。
+- TUI 里默认是 No；非交互模式需要显式加 `--commit`。
+- 不是 git 仓库 / 没有改动时会跳过并说明原因。
 
 ## 许可证
 
@@ -116,12 +156,19 @@ scripts/smoke.mjs    端到端冒烟（不碰真实 HOME）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 28 项端到端断言
+npm run smoke     # 47 项端到端断言
 ```
 
 冒烟测试覆盖：项目级未确认声明必须被拒绝且不落盘、`--claude` 才动 `.claude/`、
 重复运行幂等、`--dry-run` 不写盘、用户级安装不污染 HOME 根与 `AGENTS.md`、
 `CLAUDE.md` 的 `@` 导入必须解析到真实存在的 `AGENTS.md`（两种作用域各验一次）、
-`--license --json` 结构、「`AGENTS.md` 里不得混入 MPL 内容」，以及
-**进度条帧宽在任何终端列宽下都不超过 `columns - 1`**（超宽会折行，使 `\r` 失效、
-每帧新起一行；详见 `src/ui/progress.ts` 的注释）。
+`--license --json` 结构、「`AGENTS.md` 里不得混入 MPL 内容」、
+**进度条帧宽在任何终端列宽下都不超过 `columns - 1`**（超宽会折行，使 `\r` 失效、每帧新起一行；
+详见 `src/ui/progress.ts` 的注释）、note 文案按分句折行，以及：
+
+- 清单：`init` 写出的清单含 schema/scope/逐文件 sha256，且不把用户既有文件记进去
+- 卸载：清单内文件删净、空目录清理、清单外的文件保留、无清单时报错退出 2
+- 卸载安全阀：安装后被改过的文件默认保留且清单只留这些条目；`--force` 才连改动一起删
+- 卸载选择：两个作用域同时存在时非交互必须 `--scope`，指定作用域不会波及另一个
+- 代提交：只提交本次路径（故意先暂存一个无关文件，验证它不会进提交也不被清出暂存区），
+  非交互不加 `--commit` 不产生提交，用户级安装不触发提交步骤

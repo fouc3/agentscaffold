@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { runInit } from '../commands/init.js';
+import { runUninstall } from '../commands/uninstall.js';
 import { runLicense } from '../commands/license.js';
 import { runDoctor } from '../commands/doctor.js';
 import { loadPacks } from '../pack/pack.js';
@@ -41,6 +42,7 @@ if (argv.includes('--license')) {
     .option('--skills <names>', '逗号分隔的技能包名（默认全部）')
     .option('--no-skills', '只写文档，不安装技能包')
     .option('--accept-mpl-notice', '非交互模式下确认接受第三方许可（项目级安装必需）', false)
+    .option('--commit', '项目级：完成后把本次改动提交到当前仓库（非交互模式需显式指定；不会 push）', false)
     .action(async (path: string, options: Record<string, unknown>) => {
       const skillsOption = options.skills;
       process.exitCode = await runInit(path, {
@@ -58,6 +60,26 @@ if (argv.includes('--license')) {
             : undefined,
         noSkills: skillsOption === false,
         acceptMplNotice: options.acceptMplNotice === true,
+        commit: options.commit === true,
+      });
+    });
+
+  program
+    .command('uninstall')
+    .description('移除 agentscaffold 安装的文件（自动探测用户级/项目级，有哪个显示哪个）')
+    .argument('[path]', '项目根目录', process.cwd())
+    .option('--scope <scope>', '只卸载某个作用域：user 或 project')
+    .option('--yes', '不交互，直接执行', false)
+    .option('--force', '连安装后被修改过的文件也删除', false)
+    .option('--dry-run', '只预览要删什么，不落盘', false)
+    .option('--commit', '项目级：卸载后把本次改动提交到当前仓库（非交互模式需显式指定；不会 push）', false)
+    .action(async (path: string, options: Record<string, unknown>) => {
+      process.exitCode = await runUninstall(path, {
+        scope: typeof options.scope === 'string' ? options.scope : undefined,
+        yes: options.yes === true,
+        force: options.force === true,
+        dryRun: options.dryRun === true,
+        commit: options.commit === true,
       });
     });
 
