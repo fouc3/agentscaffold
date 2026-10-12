@@ -17,7 +17,7 @@
       "why": "读取 Firefox Profiler 记录（Gecko 系项目）",
       "minVersion": "0.10.0",
       "install": "npm install -g @firefox-devtools/profiler-cli@latest",
-      "installArgv": ["npm", "install", "-g", "@firefox-devtools/profiler-cli@latest"],
+      "installWith": { "manager": "npm", "package": "@firefox-devtools/profiler-cli@latest" },
       "fallback": "换成你技术栈的采样器，见本技能的 references/tools.md"
     },
     {

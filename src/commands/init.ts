@@ -13,8 +13,16 @@ import {
 } from '../init/manifest.js';
 import { maybeCommit } from './uninstall.js';
 import { loadPacks, optionalPacks, selectPacks, type LoadedPack } from '../pack/pack.js';
-import { formatToolDetails, formatToolLine, probePacks, type ToolStatus } from '../init/cli-deps.js';
-import { installableMissing, runInstalls } from '../init/tool-install.js';
+import { formatToolDetails, formatToolLine, probePacks } from '../init/cli-deps.js';
+import {
+  advisoryOnly,
+  installableMissing,
+  isolatedArgv,
+  pathHint,
+  runInstalls,
+  toolsBinDir,
+  type InstallTarget,
+} from '../init/tool-install.js';
 import { createProgress } from '../ui/progress.js';
 import { getGlyphs } from '../ui/glyphs.js';
 import { noteWidth, wrapToWidth } from '../ui/width.js';
@@ -309,12 +317,21 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
     process.stdout.write(`${toolLines.join('\n')}\n`);
   }
 
-  // Optional tool packages. Offered only for tools whose pack declared a runnable argv, and
-  // installed only when the user picks them (or passes --install-tools); nothing by default.
+  // Optional tool packages. Everything here goes into our own prefix (~/.agents/tools), never the
+  // system global one: the machine's npm prefix is /usr, so `npm -g` would download first and then
+  // fail with EACCES, leaving cache entries behind. Offered only when the pack declared a
+  // structured `installWith`; installed only if the user picks it (or passes --install-tools).
   if (!flags.dryRun) {
     const missing = installableMissing(tools);
+    const advice = advisoryOnly(tools);
+    if (advice.length > 0) {
+      process.stdout.write(
+        `  ${dim(`其余缺的工具不代装（装法因环境而异）：${advice.map((status) => status.name).join('、')}`)}\n`,
+      );
+    }
     if (missing.length > 0) {
-      let selected: ToolStatus[] = [];
+      const binDir = toolsBinDir();
+      let selected: InstallTarget[] = [];
       if (tty) {
         const picked = answer<string[]>(
           await clack.multiselect<string>({
@@ -322,41 +339,61 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
             options: missing.map((status) => ({
               value: status.name,
               label: status.name,
-              hint: status.install ?? (status.installArgv ?? []).join(' '),
+              hint: `装到 ${binDir}（不动系统全局）`,
             })),
             initialValues: [],
             required: false,
           }),
         );
-        selected = missing.filter((status) => picked.includes(status.name));
+        selected = missing
+          .filter((status) => picked.includes(status.name))
+          .map((status) => ({
+            name: status.name,
+            manager: status.installWith?.manager ?? 'npm',
+            package: status.installWith?.package ?? '',
+          }));
       } else if (flags.installTools) {
-        selected = missing;
+        selected = missing.map((status) => ({
+          name: status.name,
+          manager: status.installWith?.manager ?? 'npm',
+          package: status.installWith?.package ?? '',
+        }));
       }
 
       if (selected.length > 0) {
         const spinner = tty ? clack.spinner() : undefined;
-        const outcomes = await runInstalls(selected, (status) => {
-          const command = (status.installArgv ?? []).join(' ');
-          if (spinner === undefined) process.stdout.write(`安装 ${status.name}：${command}\n`);
-          else spinner.message(`安装 ${status.name}：${command}`);
+        const outcomes = await runInstalls(selected, (target) => {
+          const command = isolatedArgv(target).join(' ');
+          if (spinner === undefined) process.stdout.write(`安装 ${target.name}：${command}\n`);
+          else spinner.message(`安装 ${target.name}：${command}`);
         });
         spinner?.stop('可选工具安装结束');
 
         const lines: string[] = [];
         for (const outcome of outcomes) {
           if (outcome.ok) {
-            lines.push(`  ${green('已安装')} ${outcome.name}`);
+            lines.push(`  ${green('已安装')} ${outcome.name} ${dim(`→ ${toolsBinDir()}`)}`);
           } else {
             lines.push(`  ${yellow('未安装')} ${outcome.name}：${outcome.detail.split('\n')[0] ?? ''}`);
-            if (outcome.needsPrivileges) {
-              lines.push(`      ${dim(`看起来是权限问题，请自己执行：${outcome.command}`)}`);
-            }
+            lines.push(`      ${dim(`命令：${outcome.command}`)}`);
           }
         }
         process.stdout.write(`${lines.join('\n')}\n`);
 
+        if (outcomes.some((outcome) => outcome.ok)) {
+          const hint = pathHint();
+          if (hint.onPath) {
+            process.stdout.write(`  ${dim(`工具装在 ${hint.binDir}（已在 PATH 上）`)}\n`);
+          } else {
+            process.stdout.write(
+              `  ${yellow('注意')}：${hint.binDir} 不在 PATH 上，加一行就能用：\n      ${hint.line}\n` +
+                `      ${dim('不想用时可整目录撤销：agentscaffold tools --remove-all')}\n`,
+            );
+          }
+        }
+
         // Re-probe so the user sees the new state instead of a stale "missing".
-        const names = new Set(selected.map((status) => status.name));
+        const names = new Set(selected.map((target) => target.name));
         for (const status of probePacks(plan.packs).filter((item) => names.has(item.name))) {
           process.stdout.write(`  ${formatToolLine(status)}\n`);
         }

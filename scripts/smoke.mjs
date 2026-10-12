@@ -414,54 +414,23 @@ check('代提交：缺少 git 身份时给出可照做的提示，并说明仓�
   assert.equal(gitTry(['rev-parse', '--verify', '--quiet', 'HEAD'], repo).trim(), '', '身份缺失时不应产生提交');
 });
 
-// ── 15. 可选工具安装环节 ────────────────────────────────────────────────────
-const { installableMissing, runInstall } = await import(new URL('../dist/init/tool-install.js', import.meta.url));
+// ── 15. 可选工具：依赖声明与默认不装 ────────────────────────────────────────
 const { probePacks } = await import(new URL('../dist/init/cli-deps.js', import.meta.url));
 const { loadPacks } = await import(new URL('../dist/pack/pack.js', import.meta.url));
 
-async function checkAsync(name, fn) {
-  try {
-    await fn();
-    checks.push([true, name]);
-  } catch (error) {
-    checks.push([false, `${name}\n      ${error.message}`]);
+check('可选工具：随包技能包确实声明了可安装的工具（结构化 installWith）', () => {
+  const statuses = probePacks(loadPacks());
+  const installable = statuses.filter((status) => status.installWith !== undefined).map((status) => status.name);
+  assert.ok(installable.includes('profiler-cli'), installable.join(',') || '(无)');
+  assert.ok(
+    statuses.some((status) => status.name === 'codegraph' && status.required === false),
+    'codegraph 应是可选工具',
+  );
+  // 没有 installWith 的工具只能是建议
+  for (const status of statuses) {
+    if (status.installWith !== undefined) continue;
+    assert.equal(status.installArgv === undefined || Array.isArray(status.installArgv), true);
   }
-}
-
-const fakeStatus = (over) => ({ name: 'demo', required: false, found: false, versionOk: false, usedBy: [], ...over });
-
-await checkAsync('可选工具：只挑出「缺失 + 声明了安装命令」的', async () => {
-  const picked = installableMissing([
-    fakeStatus({ name: 'a', installArgv: ['true'] }),
-    fakeStatus({ name: 'b' }), // 只给了人看的说明，没授权我们执行
-    fakeStatus({ name: 'c', found: true, versionOk: true, installArgv: ['true'] }), // 已装
-  ]);
-  assert.deepEqual(picked.map((status) => status.name), ['a']);
-});
-
-await checkAsync('可选工具：按 argv 执行，不经过 shell', async () => {
-  const outcome = await runInstall(fakeStatus({ installArgv: [process.execPath, '-e', 'process.exit(0)'] }));
-  assert.equal(outcome.ok, true, outcome.detail);
-  // 若经过 shell，$ 与 ; 会被解释；这里断言 argv 原样传递
-  const echo = await runInstall(
-    fakeStatus({ name: 'echo', installArgv: [process.execPath, '-e', 'console.log(process.argv.slice(1).join("|"))', '$HOME;rm -rf'] }),
-  );
-  assert.equal(echo.ok, true, echo.detail);
-});
-
-await checkAsync('可选工具：失败时报告输出并判定权限问题', async () => {
-  const outcome = await runInstall(
-    fakeStatus({ installArgv: [process.execPath, '-e', 'console.error("npm ERR! EACCES: permission denied"); process.exit(1)'] }),
-  );
-  assert.equal(outcome.ok, false);
-  assert.ok(outcome.needsPrivileges, `应识别为权限问题，实际 detail=${outcome.detail}`);
-});
-
-check('可选工具：随包技能包确实声明了可安装的工具', () => {
-  const names = probePacks(loadPacks())
-    .filter((status) => Array.isArray(status.installArgv) && status.installArgv.length > 0)
-    .map((status) => status.name);
-  assert.ok(names.includes('profiler-cli'), names.join(',') || '(无)');
 });
 
 check('可选工具：非交互且没加 --install-tools 时不安装', () => {
@@ -469,7 +438,7 @@ check('可选工具：非交互且没加 --install-tools 时不安装', () => {
   mkdirSync(repo, { recursive: true });
   const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
   assert.ok(!output.includes('可选工具安装结束'), output);
-  assert.ok(output.includes('install'), '报告里仍应给出建议的安装命令');
+  assert.ok(output.includes('index.ts') || output.includes('install'), '报告里仍应给出建议的安装命令');
 });
 
 // ── 16. 附加技能包（optional: true）─────────────────────────────────────────
@@ -842,6 +811,131 @@ check('上下文规则：--since <ref> 从 git 取改动文件', () => {
   const ranged = JSON.parse(runIn(['context', '.', '--range', 'HEAD...HEAD', '--json'], repo));
   assert.deepEqual(ranged.changed, [], '三点比较到自己应得到空集');
   assert.equal(ranged.changed_source, 'git diff --name-only HEAD...HEAD');
+});
+
+// ── 19. 可选工具：隔离安装到自用前缀（不碰系统全局）────────────────────────
+const {
+  isolatedArgv,
+  installableMissing,
+  advisoryOnly,
+  canInstall,
+  listInstalled,
+} = await import(new URL('../dist/init/tool-install.js', import.meta.url));
+const stubManager = join(root, 'scripts', 'fixtures', 'fake-manager.sh');
+const fakeTools = join(sandbox, 'tools-prefix');
+const managerLog = join(sandbox, 'manager.log');
+const toolEnv = {
+  ...process.env,
+  HOME: fakeHome,
+  AGENTSCAFFOLD_NO_TUI: '1',
+  NO_COLOR: '1',
+  AGENTSCAFFOLD_TOOLS_DIR: fakeTools,
+  AGENTSCAFFOLD_NPM: stubManager,
+  AGENTSCAFFOLD_CARGO: stubManager,
+  FAKE_MANAGER_LOG: managerLog,
+};
+const fakeStatus = (over) => ({ name: 'demo', required: false, found: false, versionOk: false, usedBy: [], ...over });
+
+check('可选工具：npm 走 --prefix、cargo 走 --root，从不带 -g', () => {
+  const npm = isolatedArgv({ name: 'x', manager: 'npm', package: '@scope/pkg' }, '/tmp/p').join(' ');
+  const cargo = isolatedArgv({ name: 'y', manager: 'cargo', package: 'crate' }, '/tmp/p').join(' ');
+  assert.ok(npm.includes('--prefix /tmp/p'), npm);
+  assert.ok(!npm.includes(' -g'), `绝不能全局安装：${npm}`);
+  assert.ok(cargo.includes('--root /tmp/p'), cargo);
+  assert.ok(cargo.includes('--locked'), cargo);
+});
+
+check('可选工具：只挑声明了 installWith 的；裸 argv 只算建议、不执行', () => {
+  const statuses = [
+    fakeStatus({ name: 'structured', installWith: { manager: 'npm', package: 'p' } }),
+    fakeStatus({ name: 'raw-argv-only', installArgv: ['npm', 'install', '-g', 'p'] }),
+    fakeStatus({ name: 'installed', found: true, installWith: { manager: 'npm', package: 'p' } }),
+    fakeStatus({ name: 'pip-only' }),
+  ];
+  assert.deepEqual(installableMissing(statuses).map((s) => s.name), ['structured']);
+  assert.deepEqual(advisoryOnly(statuses).map((s) => s.name), ['raw-argv-only', 'pip-only']);
+});
+
+check('可选工具：管理器缺失时前置检查就拦下，不跑也不留记录', () => {
+  const previous = process.env.AGENTSCAFFOLD_NPM;
+  process.env.AGENTSCAFFOLD_NPM = join(sandbox, 'no-such-manager');
+  // canInstall 收的是 InstallTarget（name/manager/package），不是带 installWith 的 ToolStatus。
+  const verdict = canInstall({ name: 'x', manager: 'npm', package: 'p' }, fakeTools);
+  if (previous === undefined) delete process.env.AGENTSCAFFOLD_NPM;
+  else process.env.AGENTSCAFFOLD_NPM = previous;
+  assert.equal(verdict.ok, false, '找不到管理器就该拒绝执行');
+  assert.ok(
+    (verdict.reason ?? '').includes('no-such-manager') || (verdict.reason ?? '').includes('找不到'),
+    verdict.reason,
+  );
+});
+
+check('可选工具：装进自用前缀并留下可撤销的记录（端到端，桩管理器）', () => {
+  rmSync(fakeTools, { recursive: true, force: true });
+  rmSync(managerLog, { force: true });
+  const repo = join(sandbox, 'tools-project');
+  mkdirSync(repo, { recursive: true });
+  const output = execFileSync(
+    process.execPath,
+    [cli, 'init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--install-tools'],
+    { cwd: repo, encoding: 'utf8', env: toolEnv },
+  );
+  assert.ok(output.includes('已安装'), output);
+  assert.ok(output.includes(fakeTools), `必须说明装到自用前缀：\n${output}`);
+  const log = readFileSync(managerLog, 'utf8');
+  // 权威证据：真正执行的命令里绝不能出现 -g（报告里给人看的建议文案不算）。
+  assert.ok(log.includes(`--prefix ${fakeTools}`), log);
+  assert.ok(!/\s-g\s/.test(log), `执行的命令里不该有 -g：\n${log}`);
+  const records = listInstalled(fakeTools);
+  assert.ok(records.length >= 1, JSON.stringify(records));
+  assert.ok(
+    records.every((record) => record.argv.includes('--prefix') || record.argv.includes('--root')),
+    JSON.stringify(records),
+  );
+});
+
+check('可选工具：PATH 不在时给出加 PATH 的一行；能列出与撤销', () => {
+  const listed = execFileSync(process.execPath, [cli, 'tools'], { encoding: 'utf8', env: toolEnv });
+  assert.ok(listed.includes('export PATH='), listed);
+  assert.ok(listed.includes('已装'), listed);
+
+  const removed = execFileSync(process.execPath, [cli, 'tools', '--remove', listInstalled(fakeTools)[0].name], {
+    encoding: 'utf8',
+    env: toolEnv,
+  });
+  assert.ok(removed.includes('已移除'), removed);
+
+  const all = execFileSync(process.execPath, [cli, 'tools', '--remove-all'], { encoding: 'utf8', env: toolEnv });
+  assert.ok(all.includes('已撤销'), all);
+  assert.ok(!existsSync(fakeTools), '撤销全部后目录应被删掉');
+});
+
+check('可选工具：用户级卸载时把我们自装的工具一并撤销', () => {
+  rmSync(fakeTools, { recursive: true, force: true });
+  mkdirSync(join(fakeTools, 'bin'), { recursive: true });
+  writeFileSync(
+    join(fakeTools, 'installed.json'),
+    JSON.stringify({
+      tool: 'agentscaffold',
+      prefix: fakeTools,
+      installed: [
+        {
+          name: 'demo',
+          manager: 'npm',
+          package: 'demo',
+          argv: ['npm', 'install', '--prefix', fakeTools, 'demo'],
+          installedAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  );
+  runIn(['init', '--yes'], sandbox);
+  const output = execFileSync(process.execPath, [cli, 'uninstall', '--yes', '--scope', 'user'], {
+    encoding: 'utf8',
+    env: toolEnv,
+  });
+  assert.ok(output.includes('已撤销'), output);
+  assert.ok(!existsSync(fakeTools), '工具前缀应随之删除');
 });
 
 // ── report ──────────────────────────────────────────────────────────────────

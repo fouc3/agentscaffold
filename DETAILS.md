@@ -24,6 +24,7 @@
 | 检查安装状态与 CLI | `agentscaffold doctor [path] [--scope user\|project] [--json]` |
 | 检索代码（定义/标识符/文本/调用关系） | `agentscaffold search <关键词> [--kind define\|id\|text\|callers\|callees\|impact] [--path <dir>] [--glob <g>] [--ext <e>] [--limit N] [--json]` |
 | 进检索 TUI | 不带参数运行 `agentscaffold`（只在真终端里） |
+| 查看/撤销代装的可选工具 | `agentscaffold tools [--remove <名字> \| --remove-all] [--json]` |
 | 生成上下文规则模板 | `agentscaffold context --init [path]` |
 | 校验上下文规则 | `agentscaffold context --check [path] [--rules <file>] [--json]` |
 | 看这次改动该读什么 | `agentscaffold context [path] [--since <ref> \| --range <a...b> \| --changed <files...>] [--json]` |
@@ -67,17 +68,27 @@
 - 删除完自底向上清理被清空的目录（含 `.agents` 本身），非空目录与清单外文件一律不动。
 - 两个作用域都没有清单 → 报错 exit 2，不做任何猜测性删除；双作用域 + 非交互 → 必须 `--scope`。
 
-## 可选工具安装
+## 可选工具：只装进我们自己的前缀
 
-`init` 在报告完 CLI 状态之后，会问一次「是否安装缺失的可选工具？」，默认一个都不勾选：
+`init` 报告完 CLI 状态后会问一次「是否安装缺失的可选工具？」，默认一个都不勾。**所有代装都进
+`~/.agents/tools`**，从不碰系统全局前缀。这不是洁癖，是本机实测的结论：这里 `npm prefix -g` 是
+`/usr`，`npm i -g` 必然先下载、再撞 EACCES，于是失败一次就留下 npm 缓存与 debug 日志——
+**带副作用的失败**。
 
-- **只有技能包显式声明 `installArgv` 的工具才会被提供**。只写 `install`（给人看的建议）是不够的，
-  包作者不写 `installArgv` 就等于没授权本工具去执行任何东西。
-- 安装命令以 **argv 数组**执行，从不经过 shell，因此技能包里的数据无法注入 shell 语法。
-- 非交互模式需要显式 `--install-tools`；不加就只报告。
-- 失败会带上该执行的完整命令；识别为权限问题（如 `npm i -g` 写 `/usr`）时提示你自己执行，
-  **不会**自动加 sudo、不重试。
-- 单个安装最长 15 分钟，超时终止并报告。
+- 声明：技能包写结构化的 `installWith = { manager = "npm"|"cargo", package = "…" }`。
+  只有声明了它的工具才会被提供安装。旧的裸 `installArgv` 数组保留可读，但**永不执行**：
+  拿包数据里的 argv 直接跑，既越权，又正是上面那次事故的来源。
+- 命令由**我们自己拼**（`npm install --prefix <dir> …` / `cargo install --root <dir> --locked …`），
+  所以包数据无法注入参数，也不会出现 `-g`。
+- 装不了的一律**只给建议不执行**（pip、系统包管理器、管理器本身没装），前置检查在第一行就拦下。
+- 记录：`~/.agents/tools/installed.json` 逐条记 {名字, manager, package, argv, 时间}。
+  `agentscaffold tools` 列出与撤销，`--remove <名字>` 走管理器卸载、`--remove-all` 连目录一起删；
+  `uninstall --scope user` 也会把自装工具一并撤销（工具是机器状态，不进项目清单）。
+- `~/.agents/tools/bin` 不在 PATH 时输出该加的那一行，**不替你改 shell 配置**。
+- 安装最长 15 分钟，超时终止；**安装过程中按 Ctrl-C 会先杀子进程、再报出前缀里已有什么**，
+  然后以 130 退出，不再出现"终端回来了但不知道留下了什么"。
+- 诚实的边界：即使装进我们的前缀，npm/cargo 自己仍会写它们的缓存与日志（`~/.npm`、`~/.cargo`）。
+  这点在输出里说明；要清就清那个缓存，别指望我们代劳。冒烟测试里全部用桩管理器，不联网、不编译。
 
 ## 检索（`agentscaffold search` / 无参数进 TUI）
 
@@ -93,8 +104,8 @@
 
 - `--define` 的选择顺序：class / struct / interface / enum / function / method / constructor…——
   先要类定义，其次函数实现，不拿一行上下文充数（对齐 searchfox-cli 的 `--define` 行为）。
-- codegraph 是**可选**依赖：声明在工具级依赖表里（`why` / `install` / `installArgv` / `fallback`），
-  因此 `init` 与 `doctor` 会报告它，`init` 的“安装缺失的可选工具”步骤可以经你同意后安装它。
+- codegraph 是**可选**依赖：声明在工具级依赖表里（`why` / `install` / `installWith` / `fallback`），
+  因此 `init` 与 `doctor` 会报告它，`init` 的“安装缺失的可选工具”步骤可以经你同意后把它装进自用前缀。
   **我们从不自动安装，也从不自动建索引**（后者可能耗时很久）。
 - 无参数运行：真终端 → 检索 TUI；非 TTY / `AGENTSCAFFOLD_NO_TUI=1` / 设置了 `CI` → 打印 help
   （在无法输入的地方弹提示只会像卡死），退出码 0。
@@ -187,7 +198,8 @@ packs/<包名>/
 | `required` | 缺失是否导致技能不可用 |
 | `why` | 为什么需要它（`doctor` 报告里显示） |
 | `install` | 建议的安装命令（只显示，不执行） |
-| `installArgv` | 同上，但用 argv 数组写。**写了它才会在 `init` 里被提供安装**，从不走 shell |
+| `installWith` | `{ manager = "npm"\|"cargo", package = "…" }`。**只有写了它才会被提供代装**，且只装进 `~/.agents/tools` |
+| `installArgv` | 旧字段，保留可读但**永不执行**（拿包数据的 argv 直接跑既越权、也是那次 `npm -g` 事故的来源） |
 | `fallback` | 没有它时怎么办 |
 
 两条写作约束：
@@ -241,7 +253,7 @@ scripts/smoke.mjs    端到端冒烟（用假 HOME，不碰真实用户目录）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 71 项端到端断言
+npm run smoke     # 89 项端到端断言
 ```
 
 冒烟覆盖（按主题）：
@@ -260,9 +272,10 @@ npm run smoke     # 71 项端到端断言
   非交互不加 `--commit` 不提交、用户级不触发提交步骤、未初始化仓库时不加 `--commit`
   绝不 `git init`、加了会先 `git init -b main` 再提交且无远程、缺 git 身份时给出可照做的
   `git config` 提示且不产生空提交。
-- **可选工具**：只挑「缺失 + 声明了 `installArgv`」的；安装命令以 argv 传递（断言 `$HOME;rm -rf`
-  这类参数不被 shell 解释）；失败时识别权限问题；随包技能包确实声明了可安装的工具；
-  非交互不加 `--install-tools` 时只报告不安装。
+- **可选工具（隔离安装）**：`isolatedArgv` 对 npm 是 `--prefix`、对 cargo 是 `--root`，且**不含 `-g`**；
+  只挑声明了 `installWith` 的，裸 `installArgv` 与 pip 类只算建议；管理器缺失时前置检查就拒绝执行；
+  端到端（桩管理器）验证装进自用前缀、记录可撤销、PATH 提示出现、`tools --remove/--remove-all` 生效、
+  用户级 `uninstall` 会一并撤销自装工具；全程不联网、不编译。
 - **附加包**：默认不装；`--add-packs` 才装并带上自己的 `LICENSE-MIT`（MIT 包不该带 MPL 文件）；
   清单记录追加包且卸载一并清干净；`--skills` 显式点名也能装；清单里 MPL 与 MIT 的划分不错位。
 - **交互可继续性**：`init` 里的多选步骤都设了 `required: false`——clack 默认要求「至少选一个」，

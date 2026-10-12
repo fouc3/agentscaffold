@@ -10,14 +10,21 @@ export interface PackCli {
   why?: string;
   /** Accepted minimum version, compared against the first dotted number found. */
   minVersion?: string;
-  /** Command a human can run to install it. Never executed as a shell string. */
+  /** Command a human can run to install it. Only ever advice — never executed. */
   install?: string;
   /**
-   * The same install as an explicit argv array. When present, `init` may *offer* to run it
-   * (only with the user's consent); when absent the tool is only ever reported. argv keeps us
-   * from shell-interpreting pack data.
+   * The old raw argv. Kept so existing pack.json files stay readable, but it is **never executed**:
+   * running an installer argv taken from pack data is both a privilege hazard and exactly what
+   * produced a failed `npm -g` install with cache residue. Use `installWith` instead.
    */
   installArgv?: string[];
+  /**
+   * Structured, isolatable install: the manager and the package/crate name. We build the argv
+   * ourselves (`npm install --prefix ~/.agents/tools …`), so only packages a pack declares and
+   * only into a directory we own. Managers we cannot isolate (pip, system package managers) are
+   * left out on purpose and stay advice.
+   */
+  installWith?: { manager: 'npm' | 'cargo'; package: string };
   /** What still works when the CLI is absent. */
   fallback?: string;
 }

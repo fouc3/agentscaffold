@@ -31,8 +31,9 @@ export function codegraphBinary(): string {
   return override !== undefined && override.length > 0 ? override : 'codegraph';
 }
 
-export const CODEGRAPH_INSTALL_ARGV = ['npm', 'install', '-g', '@colbymchenry/codegraph'];
 export const CODEGRAPH_INSTALL = 'npm install -g @colbymchenry/codegraph';
+/** Isolatable form: we install it into our own prefix, never globally. */
+export const CODEGRAPH_INSTALL_WITH = { manager: 'npm', package: '@colbymchenry/codegraph' } as const;
 
 function probe(bin: string, args = ['--version']): string | undefined {
   const result = spawnSync(bin, args, { encoding: 'utf8', timeout: 10_000 });

@@ -7,6 +7,7 @@ import { runDoctor } from '../commands/doctor.js';
 import { loadPacks } from '../pack/pack.js';
 import { runSearch, runSearchTui } from '../commands/search.js';
 import { runContext } from '../commands/context.js';
+import { runTools } from '../commands/tools.js';
 import { interactive } from '../ui/prompt.js';
 import { buildLicenseReport, helpLicenseBlock } from '../license/notice.js';
 import { toolVersion } from '../util/version.js';
@@ -182,6 +183,20 @@ if (argv.includes('--license')) {
         check: options.check === true,
         list: options.list === true,
         init: options.init === true,
+        json: options.json === true,
+      });
+    });
+
+  program
+    .command('tools')
+    .description('查看/撤销我们代装的可选工具（装在 ~/.agents/tools，从不碰系统全局）')
+    .option('--remove <name>', '撤销某一个工具')
+    .option('--remove-all', '撤销全部并删除自用前缀目录', false)
+    .option('--json', '输出 JSON', false)
+    .action(async (options: Record<string, unknown>) => {
+      process.exitCode = await runTools({
+        remove: typeof options.remove === 'string' ? options.remove : undefined,
+        removeAll: options.removeAll === true,
         json: options.json === true,
       });
     });

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { getGlyphs } from '../ui/glyphs.js';
 import { dim, green, red, yellow } from '../ui/color.js';
 import type { LoadedPack, PackCli } from '../pack/pack.js';
-import { CODEGRAPH_INSTALL, CODEGRAPH_INSTALL_ARGV } from '../search/code.js';
+import { CODEGRAPH_INSTALL, CODEGRAPH_INSTALL_WITH } from '../search/code.js';
 
 export interface ToolStatus {
   name: string;
@@ -14,6 +14,7 @@ export interface ToolStatus {
   why?: string;
   install?: string;
   installArgv?: string[];
+  installWith?: { manager: 'npm' | 'cargo'; package: string };
   fallback?: string;
   usedBy: string[];
 }
@@ -68,7 +69,7 @@ export function collectToolRequirements(packs: LoadedPack[]): Array<PackCli & { 
     required: false,
     why: '检索的符号 / 定义 / 调用关系后端（可选加速器；文本检索只需 ripgrep）',
     install: CODEGRAPH_INSTALL,
-    installArgv: CODEGRAPH_INSTALL_ARGV,
+    installWith: CODEGRAPH_INSTALL_WITH,
     fallback: '不装也能用：agentscaffold search <关键词> --kind text',
     usedBy: ['检索'],
   });
@@ -82,7 +83,7 @@ export function collectToolRequirements(packs: LoadedPack[]): Array<PackCli & { 
       } else {
         existing.usedBy.push(pack.name);
         existing.required = existing.required || cli.required;
-        existing.installArgv ??= cli.installArgv;
+        existing.installWith ??= cli.installWith;
       }
     }
   }
@@ -102,6 +103,7 @@ export function probePacks(packs: LoadedPack[]): ToolStatus[] {
       why: cli.why,
       install: cli.install,
       installArgv: cli.installArgv,
+      installWith: cli.installWith,
       fallback: cli.fallback,
       usedBy: cli.usedBy,
     };

@@ -17,6 +17,7 @@ import {
   type DetectedInstall,
 } from '../init/manifest.js';
 import { gitAvailable, hasChanges, initRepo, isGitRepo, stageAndCommit } from '../util/git.js';
+import { listInstalled, removeAll, toolsDir } from '../init/tool-install.js';
 
 export interface UninstallFlags {
   scope?: string;
@@ -285,6 +286,24 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
     process.stdout.write(
       `${dim(`清单已保留 ${plan.keptModified.length} 条：再次运行 uninstall 可继续处理，--force 会连同修改一起删除`)}\n`,
     );
+  }
+
+  // The optional tools we installed live in our own user-level prefix, not in the manifest: that is
+  // machine state, not project state. A user-scope uninstall is the moment to give it back.
+  if (target.scope === 'user') {
+    const tools = listInstalled();
+    if (tools.length > 0) {
+      if (flags.dryRun) {
+        process.stdout.write(
+          `${dim(`自用工具目录 ${toolsDir()} 里还有 ${tools.length} 个工具（dry-run 未动）：${tools.map((tool) => tool.name).join('、')}`)}\n`,
+        );
+      } else {
+        await removeAll();
+        process.stdout.write(
+          `${green('已撤销')}：移除 ${tools.length} 个自装工具并删除 ${toolsDir()}（${tools.map((tool) => tool.name).join('、')}）\n`,
+        );
+      }
+    }
   }
 
   // Only a project-scope install lives inside a repository worth committing.
