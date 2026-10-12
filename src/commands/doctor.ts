@@ -5,6 +5,8 @@ import { scopePaths, type Scope } from '../init/scope.js';
 import { formatToolDetails, formatToolLine, probePacks } from '../init/cli-deps.js';
 import { getGlyphs } from '../ui/glyphs.js';
 import { bold, dim, yellow } from '../ui/color.js';
+import { toolVersion } from '../util/version.js';
+import { buildInfo } from '../util/build.js';
 
 export interface DoctorFlags {
   scope?: string;
@@ -97,14 +99,30 @@ export function runDoctor(pathArg: string | undefined, flags: DoctorFlags): numb
       ? [inspectScope('user', projectRoot), inspectScope('project', projectRoot)]
       : [inspectScope(scope, projectRoot)];
 
+  const info = buildInfo();
   if (flags.json === true) {
     process.stdout.write(
-      `${JSON.stringify({ projectRoot, packs: packs.map((pack) => pack.name), scopes: states }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          projectRoot,
+          packs: packs.map((pack) => pack.name),
+          build: info,
+          scopes: states,
+        },
+        null,
+        2,
+      )}\n`,
     );
     return 0;
   }
 
   const lines: string[] = [bold('agentscaffold doctor'), dim(projectRoot), ''];
+  lines.push(`运行中的构建  ${info.runningFile}`);
+  lines.push(`              ${dim(`构建于 ${info.builtAt}（v${toolVersion}）`)}`);
+  if (info.stale) {
+    lines.push(`  ${yellow('注意')}：源码比构建新（最新：${info.newestSource} ${info.newestSourceAt}），先跑 npm run build`);
+  }
+  lines.push('');
   for (const state of states) {
     lines.push(...renderScope(state, packs), '');
   }

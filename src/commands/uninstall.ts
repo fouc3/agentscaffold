@@ -4,7 +4,7 @@ import { exists } from '../util/fsx.js';
 import { toolVersion } from '../util/version.js';
 import { getGlyphs } from '../ui/glyphs.js';
 import { bold, dim, green, red, yellow } from '../ui/color.js';
-import { answer, cancelled, clack, interactive } from '../ui/prompt.js';
+import { answer, clack, declined, interactive, recordWritten } from '../ui/prompt.js';
 import { displayPath, scopeLabel, scopePaths, type Scope } from '../init/scope.js';
 import {
   MANIFEST_RELATIVE_PATH,
@@ -241,7 +241,7 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
     clack.intro(`${bold('agentscaffold')} uninstall ${dim(`v${toolVersion}`)}`);
     clack.note(summary, '即将移除');
     const ok = answer<boolean>(await clack.confirm({ message: '是否移除以上文件？', initialValue: false }));
-    if (!ok) cancelled('已取消，未删除任何文件。');
+    if (!ok) declined('已取消，未删除任何文件。');
   } else {
     process.stdout.write(`${bold('agentscaffold')} uninstall ${flags.dryRun ? '(dry-run)' : ''}\n${summary}\n`);
   }
@@ -253,6 +253,13 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
   if (!flags.dryRun && !keepsFiles && exists(manifest)) unlinkSync(manifest);
 
   const result = applyRemoval(plan, projectRoot, flags.dryRun);
+  if (!flags.dryRun) {
+    // A cancel later in the flow (the commit step) must report what was already removed.
+    recordWritten(
+      `已移除 ${plan.remove.length} 个文件` + (plan.keptModified.length > 0 ? `，保留 ${plan.keptModified.length} 个（安装后被改过）` : ''),
+      plan.keptModified.length > 0 ? `agentscaffold uninstall --force` : undefined,
+    );
+  }
 
   // Files the user edited stay behind, so keep a manifest listing exactly those: a later run
   // (optionally with --force) can still finish the job instead of losing the record.

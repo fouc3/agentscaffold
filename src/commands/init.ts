@@ -19,7 +19,7 @@ import { createProgress } from '../ui/progress.js';
 import { getGlyphs } from '../ui/glyphs.js';
 import { noteWidth, wrapToWidth } from '../ui/width.js';
 import { bold, cyan, dim, green, red, yellow } from '../ui/color.js';
-import { answer, cancelled, clack, interactive } from '../ui/prompt.js';
+import { answer, clack, declined, interactive, recordWritten } from '../ui/prompt.js';
 import { toolVersion } from '../util/version.js';
 
 export interface InitFlags {
@@ -164,7 +164,7 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       const ok = answer<boolean>(
         await clack.confirm({ message: '是否确认以上内容并继续？', initialValue: false }),
       );
-      if (!ok) cancelled('未确认，已取消，未写入任何文件。');
+      if (!ok) declined('未确认，已取消。');
       accepted = true;
     }
 
@@ -279,8 +279,11 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
   // The manifest is what makes `uninstall` able to remove exactly these files later.
   const installed = collectInstalledFiles(plan);
   const target = manifestPath(scope, projectRoot);
+  let manifestCount = installed.length;
   if (!flags.dryRun) {
     const previous = readManifest(target);
+    const entries = mergeEntries(previous?.entries, installed);
+    manifestCount = entries.length;
     writeManifest(target, {
       schema: MANIFEST_SCHEMA,
       tool: 'agentscaffold',
@@ -291,11 +294,19 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       claude: claude || previous?.claude === true,
       packs: plan.packs.map((pack) => pack.name),
       skills: plan.skills.map((item) => item.skill.name),
-      entries: mergeEntries(previous?.entries, installed),
+      entries,
     });
+    // Anything cancelled from here on (the optional-tools step, the commit step) must say that
+    // the install already happened and how to undo it, not "nothing was written".
+    recordWritten(
+      `${manifestCount} 个文件 + 安装清单（${displayPath(target, scope, projectRoot)}）`,
+      `agentscaffold uninstall${scope === 'project' ? ' .' : ''} --scope ${scope}`,
+    );
   }
+  // Report what the manifest actually records, not just the files that matched this run
+  // (a file we installed earlier and the user has not touched is still ours to remove).
   report.push(
-    `  ${glyphs.info} ${displayPath(target, scope, projectRoot)} ${dim(`[清单：${installed.length} 个文件]`)}`,
+    `  ${glyphs.info} ${displayPath(target, scope, projectRoot)} ${dim(`[清单：${manifestCount} 个文件]`)}`,
   );
   process.stdout.write(`${report.join('\n')}\n`);
 

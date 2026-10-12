@@ -103,6 +103,31 @@
 - 调用关系查询命中索引失败时（codegraph 对“找不到符号”也返回 0）会额外提示先用 `--kind id`
   确认准确符号名，避免把“查不到”显示成“没有调用者”。
 
+## 退出码、中断与幂等
+
+退出处理集中在 [`src/ui/prompt.ts`](src/ui/prompt.ts)，它是**状态感知**的：写入之后的步骤
+（可选工具、代提交）仍然可以被取消，而那时说"未做任何修改"就是假话。
+
+| 情况 | 退出码 |
+| --- | --- |
+| 成功 | 0 |
+| 用户在确认里选了 No（明确否决） | 0 |
+| Ctrl-C / Esc 中断（`clack.isCancel`），或收到 SIGINT | **130**（shell 的 SIGINT 约定） |
+| 用法错误、规则非法 JSON/字段、需要索引但没有 | 2 |
+| 规则文件不存在；检索无命中 | 1 |
+
+- 任何写入之后的步骤被中断，提示会变成「已中断。本次已经写入：<N 个文件 + 安装清单>／撤销：
+  `agentscaffold uninstall …`」——不是"什么都没动"。`recordWritten()` 负责登记这件事，
+  `SIGINT` 也走同一条报告路径（clack 之外的中断同样有交代）。
+- 未写入任何文件时，仍然是「未做任何修改」。
+- **生成的文件不含时间戳**：`AGENTS.md` 只写版本与作用域，时间记在安装清单的 `installedAt`。
+  用户要提交、要编辑这份文件，每次 init 都改一行会让 diff 抖；去掉时间戳后重复 init 得到
+  `[unchanged]`，幂等。
+- 清单打印的数量是**实际写入的条目数**（含之前装上、这次没动、但仍然是我们的文件），
+  不是"这次匹配到的文件数"——之前打印的是后者，于是出现 24 打出来是 23 这种自相矛盾。
+- `doctor` 会报出**运行中的构建**（`dist` 路径 + 构建时间）；源码比构建新时直接警告先跑
+  `npm run build`。本机是符号链接指向 `dist/`，不报这个就只能靠猜"是不是旧版"。
+
 ## 上下文规则（`agentscaffold context`）
 
 照 Firefox 的 `review-context.toml`（Review Helper）实现，格式**保持 TOML**、谓词与 `load` 写法一致，
@@ -241,7 +266,7 @@ scripts/smoke.mjs    端到端冒烟（用假 HOME，不碰真实用户目录）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 71 项端到端断言
+npm run smoke     # 91 项端到端断言
 ```
 
 冒烟覆盖（按主题）：
@@ -278,3 +303,7 @@ npm run smoke     # 71 项端到端断言
   `{ skill = "..." }` 解析成已安装技能的 `SKILL.md` 并带上 frontmatter 摘要；`load` 目标缺失只警告
   且退出 0；`--list` 的判据描述可读；无规则文件退出 1 并给 `--init`；`--init` 生成 TOML 模板且不覆盖；
   `--since HEAD` 从 git 取改动文件、`--range a...b` 走三点比较；`--rules` 指向 `.json` 也认。
+- **退出处理与幂等**：没写过东西时 `stateNote()` 说「未做任何修改」；`recordWritten()` 之后必须
+  说出写了什么与撤销命令（不许再声称没动过）；连跑两次 `init` 时 `AGENTS.md` 是 `[unchanged]`
+  且生成的文档里不含 `生成于`；两次打印的清单数一致，且等于清单文件里的实际条目数；
+  `doctor` 输出与 `--json` 都带运行中的构建信息。
