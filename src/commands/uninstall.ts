@@ -16,7 +16,7 @@ import {
   writeManifest,
   type DetectedInstall,
 } from '../init/manifest.js';
-import { gitAvailable, hasChanges, isGitRepo, stageAndCommit } from '../util/git.js';
+import { gitAvailable, hasChanges, initRepo, isGitRepo, stageAndCommit } from '../util/git.js';
 
 export interface UninstallFlags {
   scope?: string;
@@ -119,21 +119,43 @@ export interface CommitInput {
 export interface CommitOutcome {
   committed: boolean;
   hash?: string;
+  /** True when this step had to run `git init` first. */
+  initialized?: boolean;
   skipped?: string;
   error?: string;
 }
 
 /**
  * Shared by init and uninstall: ask (or honour `--commit`) and commit **only** the touched paths.
- * Never pushes — that always needs a human decision.
+ * When the directory is not a repository yet the question becomes "initialize git and commit?",
+ * because that is the only way the requested commit can happen. Never pushes.
  */
 export async function maybeCommit(input: CommitInput, options: { tty: boolean; commit: boolean }): Promise<CommitOutcome> {
   if (input.paths.length === 0) return { committed: false };
   if (!gitAvailable()) return { committed: false, skipped: '未找到 git，跳过提交' };
-  if (!isGitRepo(input.projectRoot)) return { committed: false, skipped: '当前目录不是 git 仓库，跳过提交' };
+
+  if (!isGitRepo(input.projectRoot)) {
+    if (options.tty) {
+      const yes = answer<boolean>(
+        await clack.confirm({
+          message: `${input.summary}\n当前目录还不是 git 仓库：要我 git init 再提交吗？（只提交本次涉及的路径，不会 push）`,
+          initialValue: false,
+        }),
+      );
+      if (!yes) return { committed: false, skipped: '未初始化 git，已跳过提交' };
+    } else if (!options.commit) {
+      return { committed: false, skipped: '不是 git 仓库且未加 --commit，跳过提交' };
+    }
+
+    const inited = initRepo(input.projectRoot);
+    if (!inited.ok) return { committed: false, error: `git init 失败：${inited.error ?? ''}` };
+    const created = stageAndCommit(input.projectRoot, input.paths, `chore: ${input.summary}`);
+    if (!created.ok) return { committed: false, initialized: true, error: created.error };
+    return { committed: true, initialized: true, ...(created.hash === undefined ? {} : { hash: created.hash }) };
+  }
+
   // Nothing to commit (e.g. re-running init over an identical tree) — do not even ask.
   const hasChange = hasChanges(input.projectRoot, input.paths);
-
   if (options.tty) {
     if (!hasChange) return { committed: false, skipped: '本次涉及的路径没有改动，无需提交' };
     const yes = answer<boolean>(
@@ -275,9 +297,17 @@ export async function runUninstall(pathArg: string | undefined, flags: Uninstall
       },
       { tty, commit: flags.commit },
     );
-    if (committed.committed) process.stdout.write(`${green('已提交')} ${committed.hash ?? ''}\n`);
-    else if (committed.error !== undefined) process.stdout.write(`${yellow('未提交')}：${committed.error}\n`);
-    else if (committed.skipped !== undefined && !tty) process.stdout.write(`${dim(committed.skipped)}\n`);
+    if (committed.committed) {
+      process.stdout.write(
+        `${green('已提交')} ${committed.hash ?? ''}${committed.initialized === true ? dim('（含 git init）') : ''}\n`,
+      );
+    } else if (committed.error !== undefined) {
+      process.stdout.write(
+        `${yellow('未提交')}：${committed.error}${committed.initialized === true ? dim('（git 仓库已初始化）') : ''}\n`,
+      );
+    } else if (committed.skipped !== undefined && !tty) {
+      process.stdout.write(`${dim(committed.skipped)}\n`);
+    }
   }
 
   if (tty) clack.outro(`${green('卸载完成')} — ${scopeLabel(target.scope)}`);

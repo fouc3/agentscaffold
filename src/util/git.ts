@@ -38,6 +38,25 @@ export function isGitRepo(root: string): boolean {
   return result.status === 0 && result.stdout.trim() === 'true';
 }
 
+export interface InitRepoResult {
+  ok: boolean;
+  branch?: string;
+  error?: string;
+}
+
+/** `git init -b main`, falling back to plain `git init` on git versions without `-b`. */
+export function initRepo(root: string): InitRepoResult {
+  const withBranch = run(root, ['init', '-b', 'main']);
+  if (withBranch.status === 0) return { ok: true, branch: 'main' };
+
+  const plain = run(root, ['init']);
+  if (plain.status !== 0) {
+    return { ok: false, error: (plain.stderr.trim() || withBranch.stderr.trim()).split('\n')[0] ?? '未知错误' };
+  }
+  const branch = run(root, ['symbolic-ref', '--short', 'HEAD']).stdout.trim();
+  return { ok: true, ...(branch === '' ? {} : { branch }) };
+}
+
 export function hasChanges(root: string, paths: string[]): boolean {
   if (paths.length === 0) return false;
   const result = run(root, ['status', '--porcelain', '--', ...paths]);
@@ -59,7 +78,19 @@ export function stageAndCommit(root: string, paths: string[], message: string): 
   // The pathspec gives `--only` semantics: unrelated staged changes stay staged, uncommitted.
   const commit = run(root, ['commit', '-m', message, '--', ...paths]);
   if (commit.status !== 0) {
-    const detail = (commit.stderr.trim() || commit.stdout.trim()).split('\n').slice(0, 3).join(' / ');
+    const raw = commit.stderr.trim() || commit.stdout.trim();
+    // A missing identity is a very common first-run failure; say exactly what to run.
+    if (/who are you|作者身份未知|unable to auto-detect email|user\.email|user\.name/i.test(raw)) {
+      return {
+        ok: false,
+        error:
+          '还没有配置 git 身份。请先运行：\n' +
+          '    git config --global user.name "你的名字"\n' +
+          '    git config --global user.email "you@example.com"\n' +
+          '  然后重新运行本命令，或在仓库里手动提交。',
+      };
+    }
+    const detail = raw.split('\n').slice(0, 3).join(' / ');
     return { ok: false, error: `git commit 失败：${detail}` };
   }
   const hash = run(root, ['rev-parse', '--short', 'HEAD']).stdout.trim();

@@ -378,6 +378,41 @@ check('代提交：用户级 init 不触发提交步骤', () => {
   const output = runIn(['init', '--yes'], sandbox);
   assert.ok(!output.includes('已提交'), output);
 });
+check('代提交：不是 git 仓库时，不加 --commit 不会顺手 git init', () => {
+  const repo = join(sandbox, 'commit-nogit-a');
+  mkdirSync(repo, { recursive: true });
+  const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice'], repo);
+  assert.ok(output.includes('不是 git 仓库且未加 --commit'), output);
+  assert.ok(!existsSync(join(repo, '.git')), '不应自作主张初始化仓库');
+});
+check('代提交：--commit 在非 git 目录会先 git init 再提交', () => {
+  const repo = join(sandbox, 'commit-nogit-b');
+  mkdirSync(repo, { recursive: true });
+  const output = runIn(['init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--commit'], repo);
+  assert.ok(output.includes('含 git init'), output);
+  assert.ok(existsSync(join(repo, '.git')), '应已初始化仓库');
+  const files = git(['show', '--name-only', '--pretty=format:', 'HEAD'], repo).trim().split('\n');
+  assert.ok(files.includes('AGENTS.md'), files.join('|'));
+  assert.ok(git(['rev-parse', '--abbrev-ref', 'HEAD'], repo).trim() === 'main', '默认分支应为 main');
+  assert.equal(git(['remote'], repo).trim(), '', '不应创建任何远程');
+});
+check('代提交：缺少 git 身份时给出可照做的提示，并说明仓库已建', () => {
+  const repo = join(sandbox, 'commit-noident');
+  mkdirSync(repo, { recursive: true });
+  const env = { ...gitEnv, GIT_CONFIG_NOSYSTEM: '1' };
+  for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+    delete env[key];
+  }
+  const output = execFileSync(
+    process.execPath,
+    [cli, 'init', '.', '--yes', '--scope', 'project', '--accept-mpl-notice', '--commit'],
+    { cwd: repo, encoding: 'utf8', env },
+  );
+  assert.ok(output.includes('git config --global user.name'), output);
+  assert.ok(output.includes('git 仓库已初始化'), output);
+  assert.ok(existsSync(join(repo, '.git')));
+  assert.equal(gitTry(['rev-parse', '--verify', '--quiet', 'HEAD'], repo).trim(), '', '身份缺失时不应产生提交');
+});
 
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;

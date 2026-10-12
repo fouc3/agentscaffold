@@ -98,7 +98,10 @@ agentscaffold uninstall --dry-run       # 只报告要删什么
 - 只 `git add` **本次涉及的路径**，并用 `git commit -- <路径>` 只提交这些路径——你已暂存的无关改动会原样留在暂存区。
 - **绝不 push**。
 - TUI 里默认是 No；非交互模式需要显式加 `--commit`。
-- 不是 git 仓库 / 没有改动时会跳过并说明原因。
+- **当前目录还不是 git 仓库时，这一步会变成「要我 `git init` 再提交吗？」**：同意才 `git init`（默认分支 `main`），
+  不加 `--commit` 时绝不擅自初始化仓库。
+- 还没配置 git 身份（`user.name` / `user.email`）时，会直接给出该执行的 `git config` 命令，
+  并说明仓库已初始化、只是没提交。
 
 ## 许可证
 
@@ -156,7 +159,7 @@ scripts/smoke.mjs    端到端冒烟（不碰真实 HOME）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 47 项端到端断言
+npm run smoke     # 50 项端到端断言
 ```
 
 冒烟测试覆盖：项目级未确认声明必须被拒绝且不落盘、`--claude` 才动 `.claude/`、
@@ -172,3 +175,5 @@ npm run smoke     # 47 项端到端断言
 - 卸载选择：两个作用域同时存在时非交互必须 `--scope`，指定作用域不会波及另一个
 - 代提交：只提交本次路径（故意先暂存一个无关文件，验证它不会进提交也不被清出暂存区），
   非交互不加 `--commit` 不产生提交，用户级安装不触发提交步骤
+- 代提交（未初始化仓库）：不加 `--commit` 不会顺手 `git init`；加了会先 `git init -b main` 再提交；
+  缺少 git 身份时给出可照做的 `git config` 提示且不产生空提交

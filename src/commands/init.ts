@@ -311,9 +311,17 @@ export async function runInit(pathArg: string | undefined, flags: InitFlags): Pr
       },
       { tty, commit: flags.commit },
     );
-    if (outcome.committed) process.stdout.write(`${green('已提交')} ${outcome.hash ?? ''}\n`);
-    else if (outcome.error !== undefined) process.stdout.write(`${yellow('未提交')}：${outcome.error}\n`);
-    else if (outcome.skipped !== undefined && !tty) process.stdout.write(`${dim(outcome.skipped)}\n`);
+    if (outcome.committed) {
+      process.stdout.write(
+        `${green('已提交')} ${outcome.hash ?? ''}${outcome.initialized === true ? dim('（含 git init）') : ''}\n`,
+      );
+    } else if (outcome.error !== undefined) {
+      process.stdout.write(
+        `${yellow('未提交')}：${outcome.error}${outcome.initialized === true ? dim('（git 仓库已初始化）') : ''}\n`,
+      );
+    } else if (outcome.skipped !== undefined && !tty) {
+      process.stdout.write(`${dim(outcome.skipped)}\n`);
+    }
   }
 
   if (tty) {
