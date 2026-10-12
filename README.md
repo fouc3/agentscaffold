@@ -103,35 +103,57 @@ agentscaffold uninstall --dry-run       # 只报告要删什么
 - 还没配置 git 身份（`user.name` / `user.email`）时，会直接给出该执行的 `git config` 命令，
   并说明仓库已初始化、只是没提交。
 
-## 许可证
+## 本项目提供什么技能
 
-本工具自身使用 MIT。
+技能以**技能包**为单位随包分发：装一个包 = 装它声明的全部技能，外加许可证与第三方声明。
+每个技能就是一个目录（`SKILL.md` + `references/`），agent 靠 `SKILL.md` 里 `description`
+自动判断该不该加载——**不需要你手动调用，说对话就生效**。
 
-随包某些技能文件为 MPL-2.0，仅这些文件受 MPL。逐文件清单见
-[`packs/perf-regression-triage/THIRD-PARTY-NOTICES.md`](packs/perf-regression-triage/THIRD-PARTY-NOTICES.md)，
-上游原文按原样保留在该技能目录的 `upstream/` 下（含 `PROVENANCE.json` 记录 commit 与逐文件 blob）。
+当前随包提供：
 
-使用本工具不会要求你开源你的项目，也不会改变你项目的许可证。
-项目级安装会把这些 MPL 文件放入项目目录；再分发时请保留随附声明。
+| 技能包 | 技能 | 解决什么问题 | 什么时候会被自动加载 |
+| --- | --- | --- | --- |
+| `perf-regression-triage` | `perf-regression-triage` | 性能回归告警没人系统处理：要么没人看，要么没确认真假就动手优化 | 给出性能回归告警（如「某测试在某天回归 N%」）、要判断告警真假、解读 base/new 对比结果，或问「我这次改动是不是把某基准跑慢了」 |
 
-MPL-2.0 是文件级 copyleft，不要求开源你的项目其他部分。注意不要把这些 MPL 文件的内容
-合并进你自己的源文件——合并后的文件可能受 MPL 约束。
+### `perf-regression-triage` — 性能回归从告警到修复
 
-本工具非 Mozilla/Firefox 官方项目，未获 Mozilla 背书。
-Firefox、Mozilla 是其各自所有者的商标。
+**它解决的问题。** 性能告警通常长这样：「X 测试在 Y 日回归 12%」，然后一直挂着。真去处理时
+最常见的两种错法：跳过判断直接开始优化（结果发现告警是噪声），或者改完只看一个百分比就宣布修好。
+这条技能把「**先判定真假 → 再归因 → 最后才改**」固化成有顺序、有产出的流程，并要求每一轮都便宜。
 
-## 随包技能包
+**装上以后的"效果"**——同样一个性能回归任务，agent 的行为差别是：
 
-### `perf-regression-triage`（MPL-2.0 衍生）
+| 没有这条技能 | 有这条技能 |
+| --- | --- |
+| 看到告警直接开始改代码 | 第 2 步先做复现实验；不复现就走关闭流程，不浪费一轮优化 |
+| 触发多轮 CI 各看一半 | 一次触发同时拿到 base 与 new，一条告警只回答一个问题 |
+| 把参考文档一次性读进上下文 | 走到哪一步才读哪一篇，长案例留在 `references/` |
+| 把 profile 原文塞进上下文 | 走采样器的结构化查询，只取热点与调用栈 |
+| 「大概修好了」 | 必须落到四种结论之一（修复 / 回退 / 确认是噪声 / 确认是可接受取舍），并留下数字与依据 |
+| 顺手 push、顺手改无关代码 | 任何推送、回退、改 CI 都要先得到你的批准（技能正文里明确写着） |
+| 在多个可疑提交里挑一个最像的 | 分不清时必须明说，不许猜 |
 
-性能回归从告警到修复的端到端流程：读告警 → 确认真假 → 定位成因 → 迭代到修复 → 关闭。
-数据源不写死，按项目根的 `.agents/perf-triage.config.json` 声明（适配器模板与三种常见形态见
-技能的 `references/adapters.md`）。
+**它的五步**（每一步的产物是下一步的输入，不跳步）：
 
-工作流改写自 `mozilla-firefox/firefox` 的公开 agent 技能，去掉了 Mozilla 专有工具链
-（`mach try` / Perfherder / Bugzilla MCP）；上游原文保存在 `upstream/` 以便对照。
+0. **确定数据源**：读项目根 `.agents/perf-triage.config.json`；没有就先问，不猜端点。
+1. **读告警**：取告警 ID、culprit revision、base/new、回归的测试与平台。
+2. **确认真假**：在任何调查之前，让 base 与 new 跑同一批测试；结果分
+   「复现 / 不复现 / 模棱两可」三种，只有复现才继续。
+3. **定位成因**：优先用告警自带的前后 profile，对照这次改动；常见成因就那几类
+   （热路径多了工作、丢了快路径、多了一次分配、主线程多了同步等待）。
+4. **迭代到修复**：改一处 → 跑最小对照 → 看数字；收窄测试集与平台，只有最后一次确认才跑完整测试集。
+5. **关闭**：四种结论任选其一，并留下必留信息（两侧 revision、复现次数、绝对值与百分比、认可人）。
 
-所需 CLI 由技能包声明，`init` / `doctor` 只做探测与建议：
+**你需要准备什么。** 只有一件：把数据源告诉它，写在项目根的 `.agents/perf-triage.config.json`
+（告警源、revision 来源、profile 工具、CI 触发方式、issue 跟踪）。模板与三种常见形态
+（告警库 + REST / CI 基准作业 / 本地自建基准）见技能自带的 `references/adapters.md`；
+profile 工具按技术栈选（Gecko → `profiler-cli`、Linux → `perf` / `samply`、Python → `py-spy`、
+Node → `--cpu-prof`……）。**不配也能用**：它会先问你，而不是替你猜。
+
+**它不做什么**（边界明确，避免误触发）：不负责单纯跑性能测试、不负责分析已经在手的 profile、
+不负责非性能类回归（测试失败、崩溃、构建失败），也不负责 JS 引擎微基准。
+
+**它需要的 CLI**（由技能包声明，`init` 与 `doctor` 只探测与建议，从不代装）：
 
 | CLI | 必需 | 缺失时的退路 |
 | --- | --- | --- |
@@ -141,15 +163,38 @@ Firefox、Mozilla 是其各自所有者的商标。
 | `profiler-cli` | 否 | 换成你技术栈的采样器（samply / perf / py-spy / `node --cpu-prof`） |
 | `treeherder-cli` | 否 | 用 `curl` 直连告警源 REST API |
 
+**来源与许可。** 工作流改写自 `mozilla-firefox/firefox` 公开的 agent 技能，去掉了 Mozilla 专有工具链
+（`mach try` / Perfherder / Bugzilla MCP）；上游原文按 MPL-2.0 原样保存在该技能的 `upstream/` 下以便对照，
+逐文件改动说明见 [`packs/perf-regression-triage/THIRD-PARTY-NOTICES.md`](packs/perf-regression-triage/THIRD-PARTY-NOTICES.md)。
+
+### 自己加一个技能包
+
+在 `packs/<包名>/` 放一个 `pack.json`，`init` 就会自动发现：
+
+```
+packs/<包名>/
+  pack.json                      # name/version/description/license + skills[] + cli[]
+  skills/<技能名>/SKILL.md        # 技能入口（frontmatter 需含 name 与 description）
+  skills/<技能名>/references/     # 按需读取的长文档
+  upstream/                      # 可选：原样保留的上游文件
+  LICENSE-* / THIRD-PARTY-NOTICES.md / TRADEMARKS.md
+```
+
+`cli[]` 每项声明 `name` / `required` / `why` / `install` / `fallback`，`init` 与 `doctor`
+用它们做探测与报告；技能装到作用域的技能目录后即被 agent 发现，不需要额外注册。
+写技能时记住两条：`description` 会在每次会话进入上下文（写清「什么时候该用 + 什么时候不该用」），
+正文按需读取（长案例拆到 `references/`，并说明走到第几步才读哪一篇）。
+
 ## 目录
 
 ```
 src/bin/             CLI 入口（commander）
-src/commands/        init / license / doctor
-src/init/            作用域、计划、落盘、模板、CLI 探测
+src/commands/        init / uninstall / license / doctor
+src/init/            作用域、计划、落盘、模板、安装清单、CLI 探测
 src/license/         许可报告（human / json / --help 短文案）
 src/pack/            技能包清单加载
-src/ui/              glyph 回退、颜色、clack 封装、进度条
+src/ui/              glyph 回退、颜色、宽度与折行、clack 封装、进度条
+src/util/            文件、git 代提交、版本
 packs/<pack>/        技能包：pack.json + skills/ + upstream/ + 通知文件
 scripts/smoke.mjs    端到端冒烟（不碰真实 HOME）
 ```
