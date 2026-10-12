@@ -5,6 +5,8 @@ import { runUninstall } from '../commands/uninstall.js';
 import { runLicense } from '../commands/license.js';
 import { runDoctor } from '../commands/doctor.js';
 import { loadPacks } from '../pack/pack.js';
+import { runSearch, runSearchTui } from '../commands/search.js';
+import { interactive } from '../ui/prompt.js';
 import { buildLicenseReport, helpLicenseBlock } from '../license/notice.js';
 import { toolVersion } from '../util/version.js';
 import { bold, dim, green, red, yellow } from '../ui/color.js';
@@ -25,8 +27,7 @@ if (argv.includes('--license')) {
     .name('agentscaffold')
     .description('为项目或用户初始化 agent 技能、开发要求文档与所需 CLI')
     .version(toolVersion, '-v, --version')
-    .option('--license', '打印完整许可、MPL 文件清单、源码链接与商标声明')
-    .option('--json', '配合 --license 使用，输出机器可读 JSON')
+    .option('--license', '打印完整许可、MPL 文件清单、源码链接与商标声明（加 --json 输出机器可读 JSON）')
     .showHelpAfterError()
     .addHelpText('after', `\n${helpLicenseBlock(buildLicenseReport(packs, toolVersion))}\n`);
 
@@ -131,8 +132,46 @@ if (argv.includes('--license')) {
       }
     });
 
+  program
+    .command('search')
+    .description('检索：本地代码检索（定义/标识符/文本/调用关系），不带参数运行本程序会进入检索 TUI')
+    .argument('[query]', '要检索的符号名或文本')
+    .option('--kind <kind>', 'define（定义/实现）、id（标识符）、text（文本，默认）、callers、callees、impact')
+    .option('--path <dir>', '项目目录（默认当前目录）')
+    .option('--glob <pattern>', '文本检索的路径限制，例如 src/** 或 **/*.ts')
+    .option('--ext <exts>', '文本检索的扩展名限制，逗号分隔，例如 ts,css')
+    .option('--limit <n>', '最多多少条结果', '30')
+    .option('--json', '输出 JSON', false)
+    .action(async (query: string | undefined, options: Record<string, unknown>) => {
+      const path = typeof options.path === 'string' ? options.path : undefined;
+      // A human at the keyboard with nothing to search: open the TUI instead of nagging.
+      if (interactive() && path === undefined && (query === undefined || query.length === 0)) {
+        process.exitCode = await runSearchTui();
+        return;
+      }
+      process.exitCode = await runSearch({
+        path,
+        query: typeof options.query === 'string' ? options.query : query,
+        kind: typeof options.kind === 'string' ? options.kind : undefined,
+        glob: typeof options.glob === 'string' ? options.glob : undefined,
+        ext: typeof options.ext === 'string' ? options.ext : undefined,
+        json: options.json === true,
+        limit: Number.parseInt(String(options.limit ?? '30'), 10) || 30,
+      });
+    });
+
   try {
-    await program.parseAsync(process.argv);
+    if (argv.length === 0) {
+      // Bare invocation: a human gets the 检索 TUI; a pipe/agent/bash gets help, because
+      // prompting where nothing can answer would just look like a hang.
+      if (interactive()) {
+        process.exitCode = await runSearchTui();
+      } else {
+        program.outputHelp();
+      }
+    } else {
+      await program.parseAsync(process.argv);
+    }
   } catch (error) {
     process.stderr.write(`${red('错误')}：${(error as Error).message}\n`);
     process.exitCode = 1;

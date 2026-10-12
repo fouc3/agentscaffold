@@ -8,6 +8,16 @@
 
 const ANSI_SGR = /\u001b\[[0-9;]*m/g;
 
+/**
+ * Width to pre-wrap `note`/prompt copy to. clack draws a box around it and hard-wraps anything
+ * longer, so we leave room for the frame and never hand it a line it would have to break.
+ */
+export function noteWidth(): number {
+  const columns = process.stdout.columns;
+  const width = typeof columns === 'number' && columns > 0 ? columns : 80;
+  return Math.max(24, Math.min(width - 8, 76));
+}
+
 /** Display width of a single code point (East Asian Wide / Fullwidth / emoji count as 2). */
 export function codePointWidth(code: number): number {
   if (code === 0) return 0;

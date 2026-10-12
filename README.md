@@ -173,6 +173,37 @@ Mozilla Foundation 的商标。本项目与 Mozilla 无隶属或背书关系，�
 要给合规工具或 agent 读，用 `agentscaffold --license --json`。
 逐文件说明也会随技能一起装到技能目录里（`THIRD-PARTY-NOTICES.md`），不只在项目根。
 
+## 只管敲 `agentscaffold` 会怎样
+
+在终端里不带参数运行，它不会打印一屏帮助，而是进一个**检索 TUI**：输入一个名字，
+看它**定义在哪、谁在调用、改它会影响什么**；也可以直接搜文本。
+（被脚本、管道或 AI 调用、没法输入的时候，它会老老实实打印 help，不会卡在那里等输入。）
+
+它查的是**当前项目**的代码：
+
+| 想干什么 | 用什么 | 需要什么 |
+| --- | --- | --- |
+| 定义 / 实现（给出完整源码块，不是一行上下文） | `--kind define` | 已建代码索引 |
+| 标识符（精确找符号，而不是文本命中） | `--kind id` | 已建代码索引 |
+| 谁调用了它 / 它调用了谁 / 改它影响谁 | `--kind callers\|callees\|impact` | 已建代码索引 |
+| 文本检索（可限路径与扩展名） | `--kind text` | **什么都不用，本机 ripgrep 即可** |
+
+非交互用法（AI 或脚本可以直接调）：
+
+    agentscaffold search AudioContext --kind define
+    agentscaffold search 'MySearchTerm' --kind text --glob 'src/**'
+    agentscaffold search AudioSink --kind id --json
+
+**依赖关系要说清楚**：文本检索自带、永远可用；符号与调用关系需要
+[codegraph](https://github.com/colbymchenry/codegraph)（一个本地代码索引器，可选）。
+没装或没建索引时它会**直接说清楚**并给出该执行的命令，同时告诉你退路是文本检索——
+不会静默失败，也不会偷偷替你安装或建索引。`init` / `doctor` 会把 codegraph 作为可选工具列出来。
+
+<sub>这个检索的设计思路借自 [`padenot/searchfox-cli`](https://github.com/padenot/searchfox-cli)
+（一个给 AI 用的代码检索 CLI，查的是 Mozilla 托管的索引）。它需要联网、也只覆盖 Mozilla 的代码，
+所以我们只借它的**查询形状**（定义 / 标识符 / 调用关系 + 适合给 LLM 读的输出），
+换成完全本地的后端实现，代码不复用。</sub>
+
 ## 想再给它加一个经验包
 
 在 `packs/` 下新建一个目录，放一个 `pack.json`（写明包名、说明、包含哪些技能、依赖哪些工具），

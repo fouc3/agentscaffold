@@ -22,6 +22,8 @@
 | 连改过的文件一起删 | `agentscaffold uninstall --force` |
 | 卸载后提交本次改动 | `agentscaffold uninstall --commit` |
 | 检查安装状态与 CLI | `agentscaffold doctor [path] [--scope user\|project] [--json]` |
+| 检索代码（定义/标识符/文本/调用关系） | `agentscaffold search <关键词> [--kind define\|id\|text\|callers\|callees\|impact] [--path <dir>] [--glob <g>] [--ext <e>] [--limit N] [--json]` |
+| 进检索 TUI | 不带参数运行 `agentscaffold`（只在真终端里） |
 | 列出随包技能包 | `agentscaffold packs` |
 | 完整许可与 MPL 文件清单 | `agentscaffold --license` |
 | 机器可读许可信息 | `agentscaffold --license --json` |
@@ -73,6 +75,30 @@
 - 失败会带上该执行的完整命令；识别为权限问题（如 `npm i -g` 写 `/usr`）时提示你自己执行，
   **不会**自动加 sudo、不重试。
 - 单个安装最长 15 分钟，超时终止并报告。
+
+## 检索（`agentscaffold search` / 无参数进 TUI）
+
+设计思路借自 [`padenot/searchfox-cli`](https://github.com/padenot/searchfox-cli)：一个给 AI 用的
+代码检索 CLI，提供定义、标识符、调用关系查询，输出适合 LLM 读。它需要联网并只覆盖 Mozilla 的
+索引，因此这里**只借查询形状**，后端换成完全本地的实现，代码不复用、不联网。
+
+| 能力 | 后端 | 没有后端时 |
+| --- | --- | --- |
+| 文本检索 `--kind text`（支持 `--glob` / `--ext`） | `rg`，缺失时退回 `grep -rnF` | 始终可用 |
+| 标识符 `--kind id`、定义 `--kind define`（给完整源码块） | `codegraph` + 该项目已建索引 | 明确报“需要索引”，给出 `codegraph init <dir>` 与退路，退出码 2 |
+| 调用关系 `--kind callers\|callees\|impact` | 同上 | 同上 |
+
+- `--define` 的选择顺序：class / struct / interface / enum / function / method / constructor…——
+  先要类定义，其次函数实现，不拿一行上下文充数（对齐 searchfox-cli 的 `--define` 行为）。
+- codegraph 是**可选**依赖：声明在工具级依赖表里（`why` / `install` / `installArgv` / `fallback`），
+  因此 `init` 与 `doctor` 会报告它，`init` 的“安装缺失的可选工具”步骤可以经你同意后安装它。
+  **我们从不自动安装，也从不自动建索引**（后者可能耗时很久）。
+- 无参数运行：真终端 → 检索 TUI；非 TTY / `AGENTSCAFFOLD_NO_TUI=1` / 设置了 `CI` → 打印 help
+  （在无法输入的地方弹提示只会像卡死），退出码 0。
+- 输出是 markdown（借 searchfox-cli 面向 LLM 的那一点）；`--json` 带 `backends`、`needs_index`、`hits`。
+  退出码：0 有命中、1 无命中、2 用法错误或缺少所需索引。
+- 调用关系查询命中索引失败时（codegraph 对“找不到符号”也返回 0）会额外提示先用 `--kind id`
+  确认准确符号名，避免把“查不到”显示成“没有调用者”。
 
 ## 技能包格式
 
@@ -162,7 +188,7 @@ scripts/smoke.mjs    端到端冒烟（用假 HOME，不碰真实用户目录）
 ```bash
 npm install
 npm run build     # tsc + chmod bin
-npm run smoke     # 61 项端到端断言
+npm run smoke     # 71 项端到端断言
 ```
 
 冒烟覆盖（按主题）：
@@ -188,3 +214,8 @@ npm run smoke     # 61 项端到端断言
   清单记录追加包且卸载一并清干净；`--skills` 显式点名也能装；清单里 MPL 与 MIT 的划分不错位。
 - **交互可继续性**：`init` 里的多选步骤都设了 `required: false`——clack 默认要求「至少选一个」，
   不放开的话「一个都不装」在 TUI 里根本提交不了（这是实测踩到的坑）。
+- **检索**：非交互无参数只打印 help；文本检索在没有索引的目录里也能命中（`--glob` 的语义必须与
+  ripgrep 一致，否则 rg 过滤与我们的后过滤会打架）；需要索引的查询在无索引时退出 2 并给出
+  `codegraph init` 与 `--kind text` 退路；`--json` 带后端与 `needs_index`；非法 `--kind` 退出 2；
+  另外断言 codegraph 在依赖表里是**可选**且写明了退路。装了 codegraph 时会临时给
+  `scripts/fixtures/sample-project` 建索引，验证标识符、完整定义正文与调用关系；没装则跳过那三条。

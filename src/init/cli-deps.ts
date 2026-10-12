@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { getGlyphs } from '../ui/glyphs.js';
 import { dim, green, red, yellow } from '../ui/color.js';
 import type { LoadedPack, PackCli } from '../pack/pack.js';
+import { CODEGRAPH_INSTALL, CODEGRAPH_INSTALL_ARGV } from '../search/code.js';
 
 export interface ToolStatus {
   name: string;
@@ -58,6 +59,20 @@ function meetsMinimum(found: string | undefined, minimum: string | undefined): b
 
 export function collectToolRequirements(packs: LoadedPack[]): Array<PackCli & { usedBy: string[] }> {
   const byName = new Map<string, PackCli & { usedBy: string[] }>();
+
+  // Tool-level (not pack-level) optional dependencies. Same reporting, same opt-in install and
+  // the same "here is the fallback" contract: codegraph only accelerates `agentscaffold search`
+  // (symbols, definitions, call graphs); text search runs on ripgrep alone and always works.
+  byName.set('codegraph', {
+    name: 'codegraph',
+    required: false,
+    why: '检索的符号 / 定义 / 调用关系后端（可选加速器；文本检索只需 ripgrep）',
+    install: CODEGRAPH_INSTALL,
+    installArgv: CODEGRAPH_INSTALL_ARGV,
+    fallback: '不装也能用：agentscaffold search <关键词> --kind text',
+    usedBy: ['检索'],
+  });
+
   for (const pack of packs) {
     // `cli` is data from a hand-written pack.json: tolerate it being missing entirely.
     for (const cli of pack.cli ?? []) {

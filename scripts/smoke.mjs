@@ -525,6 +525,113 @@ check('许可：MIT 附加包的文件不计入 mpl_files', () => {
   assert.ok(!report.mpl_files.some((file) => file.includes('profile-analysis')));
 });
 
+// ── 17. 检索（本地后端：ripgrep 始终可用，codegraph 可选加速）────────────────
+const sampleSrc = join(root, 'scripts', 'fixtures', 'sample-project');
+const sample = join(sandbox, 'sample-project');
+mkdirSync(join(sample, 'src'), { recursive: true });
+for (const file of ['greeter.ts', 'caller.ts']) {
+  writeFileSync(join(sample, 'src', file), readFileSync(join(sampleSrc, 'src', file)));
+}
+const plain = join(sandbox, 'plain-project');
+mkdirSync(plain, { recursive: true });
+writeFileSync(join(plain, 'notes.md'), '# hello\n\nAudioSink is mentioned here.\n');
+
+const { spawnSync } = await import('node:child_process');
+const codegraphReady = spawnSync('codegraph', ['--version'], { encoding: 'utf8' }).status === 0;
+
+function searchRaw(args, cwd) {
+  try {
+    const output = execFileSync(process.execPath, [cli, ...args], {
+      encoding: 'utf8',
+      cwd,
+      env: { ...process.env, HOME: fakeHome, AGENTSCAFFOLD_NO_TUI: '1', NO_COLOR: '1' },
+    });
+    return { code: 0, output };
+  } catch (error) {
+    return { code: error.status, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  }
+}
+
+check('检索：不带参数且非交互时输出 help，不会卡在提示符', () => {
+  const output = run([]);
+  assert.ok(output.includes('Usage:'), output.slice(0, 200));
+  assert.ok(output.includes('search'), 'help 里应列出 search 命令');
+});
+
+check('检索：文本检索在没有索引的目录里也能用（无外部依赖）', () => {
+  const { code, output } = searchRaw(['search', 'AudioSink', '--kind', 'text', '--path', plain], plain);
+  assert.equal(code, 0, output);
+  assert.ok(output.includes('notes.md'), output);
+  assert.ok(output.includes('AudioSink is mentioned here'), output);
+});
+
+check('检索：文本检索支持路径/扩展名限制', () => {
+  const hit = searchRaw(['search', 'Audio', '--kind', 'text', '--glob', '**/*.md', '--path', plain], plain);
+  assert.equal(hit.code, 0, hit.output);
+  const miss = searchRaw(['search', 'Audio', '--kind', 'text', '--glob', '**/*.rs', '--path', plain], plain);
+  assert.equal(miss.code, 1, miss.output);
+  assert.ok(miss.output.includes('没有匹配'), miss.output);
+});
+
+check('检索：需要索引的查询在没有索引时明确说明，不静默失败', () => {
+  const { code, output } = searchRaw(['search', 'FriendlyGreeter', '--kind', 'id', '--path', plain], plain);
+  assert.equal(code, 2, output);
+  assert.ok(output.includes('codegraph'), output);
+  assert.ok(output.includes('codegraph init'), '必须给出建索引命令');
+  assert.ok(output.includes('--kind text'), '必须给出可用的退路');
+});
+
+check('检索：--json 给出后端与是否缺索引', () => {
+  const { output } = searchRaw(['search', 'AudioSink', '--kind', 'text', '--json', '--path', plain], plain);
+  const report = JSON.parse(output);
+  assert.equal(report.tool, 'agentscaffold');
+  assert.ok(['ripgrep', 'grep'].includes(report.backends.text), JSON.stringify(report.backends));
+  assert.equal(report.kind, 'text');
+  assert.ok(report.hits >= 1, output);
+});
+
+check('检索：--kind 非法时报错退出 2', () => {
+  const { code, output } = searchRaw(['search', 'x', '--kind', 'nope', '--path', plain], plain);
+  assert.equal(code, 2, output);
+  assert.ok(output.includes('未知的检索类型'), output);
+});
+
+check('依赖：codegraph 作为可选工具出现在依赖表里，并写明退路', () => {
+  const statuses = probePacks(loadPacks());
+  const codegraph = statuses.find((status) => status.name === 'codegraph');
+  assert.ok(codegraph !== undefined, 'codegraph 应出现在依赖表');
+  assert.equal(codegraph.required, false, 'codegraph 必须是可选的');
+  assert.ok(
+    (codegraph.fallback ?? '').includes('--kind text'),
+    `必须写明不装也能用的退路，实际：${codegraph.fallback}`,
+  );
+});
+
+if (codegraphReady) {
+  spawnSync('codegraph', ['init', sample], { encoding: 'utf8', timeout: 180_000 });
+
+  check('检索：有索引时标识符检索命中（codegraph 后端）', () => {
+    const { code, output } = searchRaw(['search', 'FriendlyGreeter', '--kind', 'id'], sample);
+    assert.equal(code, 0, output);
+    assert.ok(output.includes('FriendlyGreeter'), output);
+    assert.ok(output.includes('greeter.ts'), output);
+  });
+
+  check('检索：--define 给出完整定义正文而非一行上下文', () => {
+    const { code, output } = searchRaw(['search', 'FriendlyGreeter', '--kind', 'define'], sample);
+    assert.equal(code, 0, output);
+    assert.ok(output.includes('greet(name: string)'), `定义正文应含方法体，实际：\n${output}`);
+    assert.ok(output.includes('## 定义'), output);
+  });
+
+  check('检索：调用关系走 codegraph', () => {
+    const { output } = searchRaw(['search', 'greetTwice', '--kind', 'callers'], sample);
+    assert.ok(output.includes('## 调用者'), output);
+  });
+} else {
+  check('检索：codegraph 未安装时跳过索引类断言（文本检索已覆盖）', () => assert.ok(true));
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const [ok, name] of checks) {

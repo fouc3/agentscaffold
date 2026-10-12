@@ -17,7 +17,7 @@ import { formatToolDetails, formatToolLine, probePacks, type ToolStatus } from '
 import { installableMissing, runInstalls } from '../init/tool-install.js';
 import { createProgress } from '../ui/progress.js';
 import { getGlyphs } from '../ui/glyphs.js';
-import { wrapToWidth } from '../ui/width.js';
+import { noteWidth, wrapToWidth } from '../ui/width.js';
 import { bold, cyan, dim, green, red, yellow } from '../ui/color.js';
 import { answer, cancelled, clack, interactive } from '../ui/prompt.js';
 import { toolVersion } from '../util/version.js';
@@ -75,11 +75,6 @@ function scopeExplainer(): string {
 }
 
 /** Note content is pre-wrapped so clack never has to hard-wrap a phrase mid-word. */
-function noteWidth(): number {
-  const columns = process.stdout.columns;
-  const width = typeof columns === 'number' && columns > 0 ? columns : 80;
-  return Math.max(24, Math.min(width - 8, 76));
-}
 
 /** Project-scope confirmation copy: this is the only place the full wall is shown. */
 function projectScopeNotice(packs: LoadedPack[], projectRoot: string): string {
