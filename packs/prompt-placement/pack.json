@@ -1,0 +1,13 @@
+{
+  "name": "prompt-placement",
+  "version": "0.1.0",
+  "description": "提示词该放哪一层：根 AGENTS.md 只留硬规则，模块细节下沉到子目录，流程做成按需技能，机械路由交给配置文件",
+  "license": "MIT",
+  "skills": [
+    {
+      "name": "prompt-placement",
+      "dir": "skills/prompt-placement"
+    }
+  ],
+  "cli": []
+}

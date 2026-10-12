@@ -59,7 +59,8 @@ function meetsMinimum(found: string | undefined, minimum: string | undefined): b
 export function collectToolRequirements(packs: LoadedPack[]): Array<PackCli & { usedBy: string[] }> {
   const byName = new Map<string, PackCli & { usedBy: string[] }>();
   for (const pack of packs) {
-    for (const cli of pack.cli) {
+    // `cli` is data from a hand-written pack.json: tolerate it being missing entirely.
+    for (const cli of pack.cli ?? []) {
       const existing = byName.get(cli.name);
       if (existing === undefined) {
         byName.set(cli.name, { ...cli, usedBy: [pack.name] });
