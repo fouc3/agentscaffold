@@ -1,6 +1,6 @@
 {
   "name": "agentscaffold",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bootstrap a project with agent skills, a root dev-requirements doc and the CLIs those skills need.",
   "license": "MIT",
   "type": "module",
